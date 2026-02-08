@@ -17,7 +17,6 @@ pub struct SseConnectParams {
     pub channel_id: String,
 }
 
-/// 将 SseEvent 转换为 axum SSE Event
 fn sse_event_to_axum(sse_event: SseEvent) -> Event {
     let event = Event::default()
         .event(&sse_event.event_type)
@@ -51,7 +50,6 @@ pub async fn sse_connect(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
-    // 获取 Last-Event-ID 用于消息重放
     let last_event_id = headers
         .get("last-event-id")
         .and_then(|v| v.to_str().ok())
@@ -98,29 +96,26 @@ pub async fn sse_connect(
         );
     }
 
-    // 创建重放流
     let replay_stream = futures::stream::iter(
         replay_messages.into_iter().map(|event| Ok::<_, Infallible>(sse_event_to_axum(event)))
     );
 
-    // 实时消息流
     let stream = ReceiverStream::new(receiver);
     let event_stream = stream.map(move |sse_event: SseEvent| {
         Ok::<_, Infallible>(sse_event_to_axum(sse_event))
     });
 
-    // 心跳流
-    let heartbeat_stream = tokio_stream::wrappers::IntervalStream::new(
-        tokio::time::interval(Duration::from_secs(30))
-    ).map(|_| {
-        Ok::<_, Infallible>(
-            Event::default()
-                .event("heartbeat")
-                .data(serde_json::json!({"ts": chrono::Utc::now().timestamp()}).to_string())
-        )
-    });
+    let heartbeat_receiver = state.connection_manager.subscribe_heartbeat();
+    let heartbeat_stream = tokio_stream::wrappers::BroadcastStream::new(heartbeat_receiver)
+        .filter_map(|result| result.ok())
+        .map(|ts| {
+            Ok::<_, Infallible>(
+                Event::default()
+                    .event("heartbeat")
+                    .data(serde_json::json!({"ts": ts}).to_string())
+            )
+        });
 
-    // 合并流：先重放历史消息，再接收实时消息和心跳
     let realtime_stream = futures::stream::select(event_stream, heartbeat_stream);
     let merged_stream = replay_stream.chain(realtime_stream);
 
@@ -143,7 +138,7 @@ pub async fn sse_connect(
     Sse::new(final_stream)
         .keep_alive(
             axum::response::sse::KeepAlive::new()
-                .interval(Duration::from_secs(10))  // 10秒检测一次断开
+                .interval(Duration::from_secs(10))
                 .text("keep-alive")
         )
 }

@@ -1,24 +1,39 @@
 use dashmap::DashMap;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tracing::{info, warn};
 
 use super::{ConnectionId, SseConnection, SseEvent};
+
+const HEARTBEAT_CHANNEL_CAPACITY: usize = 16;
 
 #[derive(Clone)]
 pub struct ConnectionManager {
     connections: Arc<DashMap<ConnectionId, Arc<SseConnection>>>,
     channel_connections: Arc<DashMap<String, Vec<ConnectionId>>>,
     instance_id: String,
+    heartbeat_sender: broadcast::Sender<i64>,
 }
 
 impl ConnectionManager {
     pub fn new(instance_id: String) -> Self {
+        let (heartbeat_sender, _) = broadcast::channel(HEARTBEAT_CHANNEL_CAPACITY);
+        
         Self {
             connections: Arc::new(DashMap::new()),
             channel_connections: Arc::new(DashMap::new()),
             instance_id,
+            heartbeat_sender,
         }
+    }
+    
+    pub fn subscribe_heartbeat(&self) -> broadcast::Receiver<i64> {
+        self.heartbeat_sender.subscribe()
+    }
+    
+    pub fn send_heartbeat(&self) {
+        let ts = chrono::Utc::now().timestamp();
+        let _ = self.heartbeat_sender.send(ts);
     }
 
     pub fn register(
@@ -101,12 +116,21 @@ impl ConnectionManager {
             .map(|ids| ids.clone())
             .unwrap_or_default();
         
-        let mut sent_count = 0;
-        for conn_id in connection_ids {
-            if self.send_to_connection(&conn_id, event.clone()).await {
-                sent_count += 1;
-            }
+        if connection_ids.is_empty() {
+            return 0;
         }
+
+        let futures: Vec<_> = connection_ids
+            .into_iter()
+            .map(|conn_id| {
+                let event = event.clone();
+                let this = self.clone();
+                async move { this.send_to_connection(&conn_id, event).await }
+            })
+            .collect();
+
+        let results = futures::future::join_all(futures).await;
+        let sent_count = results.into_iter().filter(|&sent| sent).count();
         
         info!(channel_id = %channel_id, sent_count = sent_count, "Sent event to channel");
         sent_count
@@ -119,12 +143,21 @@ impl ConnectionManager {
             .map(|entry| entry.key().clone())
             .collect();
         
-        let mut sent_count = 0;
-        for conn_id in connection_ids {
-            if self.send_to_connection(&conn_id, event.clone()).await {
-                sent_count += 1;
-            }
+        if connection_ids.is_empty() {
+            return 0;
         }
+
+        let futures: Vec<_> = connection_ids
+            .into_iter()
+            .map(|conn_id| {
+                let event = event.clone();
+                let this = self.clone();
+                async move { this.send_to_connection(&conn_id, event).await }
+            })
+            .collect();
+
+        let results = futures::future::join_all(futures).await;
+        let sent_count = results.into_iter().filter(|&sent| sent).count();
         
         info!(sent_count = sent_count, "Broadcast event to all connections");
         sent_count

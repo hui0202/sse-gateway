@@ -10,11 +10,8 @@ use crate::sse::SseEvent;
 
 #[derive(Debug, Deserialize)]
 pub struct SendMessageRequest {
-    /// channel_id to send to (if empty, broadcast to all)
     pub channel_id: Option<String>,
-    /// Event type name
     pub event_type: String,
-    /// Event data (JSON)
     pub data: serde_json::Value,
 }
 
@@ -39,7 +36,6 @@ pub struct ConnectionInfo {
     pub is_active: bool,
 }
 
-/// POST /test/send - 模拟发送消息
 pub async fn send_test_message(
     State(state): State<GatewayState>,
     Json(req): Json<SendMessageRequest>,
@@ -48,7 +44,6 @@ pub async fn send_test_message(
 
     let sent_count = match &req.channel_id {
         Some(channel_id) if !channel_id.is_empty() => {
-            // 存储消息用于重放
             state.message_store.store(channel_id, &event).await;
             state.connection_manager.send_to_channel(channel_id, event).await
         }
@@ -86,7 +81,6 @@ pub async fn get_stats(State(state): State<GatewayState>) -> impl IntoResponse {
     Json(response)
 }
 
-/// GET /dashboard - Dashboard 页面（生产环境可用）
 pub async fn dashboard_page() -> Html<&'static str> {
     Html(DASHBOARD_HTML)
 }

@@ -10,6 +10,7 @@ pub use message_store::MessageStore;
 
 use axum::{routing::{get, post}, Router};
 use std::net::SocketAddr;
+use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -46,7 +47,6 @@ async fn main() -> anyhow::Result<()> {
     let state = GatewayState::new(&config);
     let cancel = CancellationToken::new();
 
-    // 连接 Redis（如果配置了）
     if let Some(ref redis_url) = config.redis.url {
         match state.message_store.connect(redis_url).await {
             Ok(_) => tracing::info!("Redis connected - message replay enabled"),
@@ -64,9 +64,10 @@ async fn main() -> anyhow::Result<()> {
             &config.pubsub.subscription_id,
         );
         let cancel_clone = cancel.clone();
+        
         tokio::spawn(async move {
             if let Err(e) = subscriber.start(cancel_clone).await {
-                tracing::error!(error = %e, "Pub/Sub subscriber error");
+                tracing::error!(error = %e, "Pub/Sub subscriber fatal error");
             }
         });
     }
@@ -74,8 +75,7 @@ async fn main() -> anyhow::Result<()> {
     let cleanup_manager = state.connection_manager.clone();
     let cancel_cleanup = cancel.clone();
     tokio::spawn(async move {
-        // 每 10 秒检查一次死连接（更及时地清理断开的连接）
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
+        let mut interval = tokio::time::interval(Duration::from_secs(30));
         loop {
             tokio::select! {
                 _ = cancel_cleanup.cancelled() => {
@@ -87,7 +87,6 @@ async fn main() -> anyhow::Result<()> {
                     cleanup_manager.cleanup_dead_connections();
                     let after = cleanup_manager.connection_count();
                     
-                    // 始终记录连接状态
                     tracing::info!(
                         active_connections = after,
                         cleaned = before.saturating_sub(after),
@@ -98,7 +97,23 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    // 检查是否启用 Dashboard（默认启用）
+    let heartbeat_manager = state.connection_manager.clone();
+    let cancel_heartbeat = cancel.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(30));
+        loop {
+            tokio::select! {
+                _ = cancel_heartbeat.cancelled() => {
+                    tracing::info!("Heartbeat task cancelled");
+                    break;
+                }
+                _ = interval.tick() => {
+                    heartbeat_manager.send_heartbeat();
+                }
+            }
+        }
+    });
+
     let enable_dashboard = std::env::var("ENABLE_DASHBOARD")
         .map(|v| v != "0" && v != "false")
         .unwrap_or(true);
@@ -108,15 +123,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/ready", get(|| async { "READY" }))
         .route("/sse/connect", get(sse_handler::sse_connect));
     
-    // Dashboard & Test 页面（可通过 ENABLE_DASHBOARD=false 禁用）
     if enable_dashboard {
         tracing::info!("Dashboard enabled at /dashboard and /test");
         app = app
-            // /dashboard 路由
             .route("/dashboard", get(test_handler::dashboard_page))
             .route("/api/stats", get(test_handler::get_stats))
             .route("/api/send", post(test_handler::send_test_message))
-            // /test 路由（兼容）
             .route("/test", get(test_handler::dashboard_page))
             .route("/test/send", post(test_handler::send_test_message))
             .route("/test/stats", get(test_handler::get_stats));
@@ -137,10 +149,43 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    
+    let cancel_for_shutdown = cancel.clone();
+    let shutdown_signal = async move {
+        let ctrl_c = async {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("Failed to install Ctrl+C handler");
+        };
+        
+        #[cfg(unix)]
+        let terminate = async {
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("Failed to install SIGTERM handler")
+                .recv()
+                .await;
+        };
+        
+        #[cfg(not(unix))]
+        let terminate = std::future::pending::<()>();
+        
+        tokio::select! {
+            _ = ctrl_c => tracing::info!("Received Ctrl+C, initiating graceful shutdown"),
+            _ = terminate => tracing::info!("Received SIGTERM, initiating graceful shutdown"),
+        }
+        
+        cancel_for_shutdown.cancel();
+    };
 
-    cancel.cancel();
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal)
+        .await?;
 
+    tracing::info!("Server stopped, waiting for background tasks...");
+    
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    
+    tracing::info!("Gateway shutdown complete");
     Ok(())
 }
 
