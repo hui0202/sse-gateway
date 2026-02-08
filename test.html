@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSE Gateway 线上测试</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            max-width: 900px; 
+            margin: 0 auto; 
+            padding: 20px; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        h1 { color: white; text-align: center; margin-bottom: 30px; text-shadow: 2px 2px 4px rgba(0,0,0,0.2); }
+        .card { 
+            background: white; 
+            border-radius: 12px; 
+            padding: 24px; 
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2); 
+            margin-bottom: 20px;
+        }
+        .card h2 { margin-top: 0; color: #333; font-size: 18px; border-bottom: 2px solid #667eea; padding-bottom: 10px; }
+        label { display: block; margin: 12px 0 6px; font-weight: 600; color: #555; }
+        input, textarea { 
+            width: 100%; 
+            padding: 12px; 
+            border: 2px solid #e0e0e0; 
+            border-radius: 8px; 
+            font-size: 14px; 
+            transition: border-color 0.3s;
+        }
+        input:focus, textarea:focus { border-color: #667eea; outline: none; }
+        textarea { min-height: 100px; font-family: 'Monaco', 'Consolas', monospace; }
+        button { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white; 
+            border: none; 
+            padding: 14px 28px; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            font-size: 15px; 
+            font-weight: 600;
+            margin-top: 12px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        button:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4); }
+        button:active { transform: translateY(0); }
+        button.danger { background: linear-gradient(135deg, #f5576c 0%, #f093fb 100%); }
+        button.success { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); }
+        .status { 
+            padding: 12px 16px; 
+            border-radius: 8px; 
+            margin: 12px 0; 
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .status.connected { background: #d4edda; color: #155724; }
+        .status.disconnected { background: #f8d7da; color: #721c24; }
+        .status.connecting { background: #fff3cd; color: #856404; }
+        #events { 
+            height: 350px; 
+            overflow-y: auto; 
+            background: #1a1a2e; 
+            color: #eee; 
+            padding: 16px; 
+            border-radius: 8px; 
+            font-family: 'Monaco', 'Consolas', monospace; 
+            font-size: 13px;
+        }
+        .event { 
+            margin: 8px 0; 
+            padding: 8px 12px; 
+            border-left: 3px solid #667eea; 
+            background: rgba(255,255,255,0.05);
+            border-radius: 0 4px 4px 0;
+        }
+        .event.heartbeat { border-color: #6c757d; opacity: 0.5; }
+        .event.system { border-color: #ffc107; background: rgba(255, 193, 7, 0.1); }
+        .event.notification { border-color: #28a745; background: rgba(40, 167, 69, 0.1); }
+        .event-type { color: #667eea; font-weight: bold; }
+        .event-time { color: #888; font-size: 11px; }
+        .url-display {
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 8px;
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 12px;
+            word-break: break-all;
+            color: #666;
+            margin-top: 10px;
+        }
+        .copy-btn {
+            background: #6c757d;
+            padding: 8px 16px;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+        .pubsub-cmd {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 16px;
+            border-radius: 8px;
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 12px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .info-box {
+            background: #e7f3ff;
+            border-left: 4px solid #2196f3;
+            padding: 12px 16px;
+            border-radius: 0 8px 8px 0;
+            margin: 16px 0;
+            font-size: 14px;
+            color: #1565c0;
+        }
+        .flex-row { display: flex; gap: 10px; align-items: flex-end; }
+        .flex-row > * { flex: 1; }
+        .flex-row button { flex: none; }
+    </style>
+</head>
+<body>
+    <h1>🚀 SSE Gateway 线上测试</h1>
+    
+    <div class="card">
+        <h2>📡 服务配置</h2>
+        <label>服务 URL</label>
+        <input type="text" id="serviceUrl" value="https://gateway-sse-912773111852.asia-east1.run.app" placeholder="Cloud Run 服务 URL">
+        
+        <label>Channel ID</label>
+        <div class="flex-row">
+            <input type="text" id="channelId" value="test-channel" placeholder="频道 ID">
+            <button onclick="connect()" class="success">🔌 连接</button>
+            <button onclick="disconnect()" class="danger">断开</button>
+        </div>
+        
+        <div id="connectionStatus" class="status disconnected">
+            <span>⭕</span> 未连接
+        </div>
+        
+        <div id="sseUrl" class="url-display" style="display:none;"></div>
+    </div>
+    
+    <div class="card">
+        <h2>📨 收到的事件</h2>
+        <div id="events"></div>
+        <button onclick="clearEvents()" style="margin-top: 12px;">🗑️ 清空</button>
+    </div>
+    
+    <div class="card">
+        <h2>📤 发送测试消息</h2>
+        <div class="info-box">
+            💡 线上服务通过 Pub/Sub 发送消息。复制下面的命令在终端执行：
+        </div>
+        
+        <label>消息内容 (JSON)</label>
+        <textarea id="messageData">{"message": "Hello from test!", "timestamp": 1234567890}</textarea>
+        
+        <label>事件类型</label>
+        <input type="text" id="eventType" value="notification" placeholder="event type">
+        
+        <button onclick="generateCommand()">📋 生成发送命令</button>
+        
+        <div id="pubsubCommand" class="pubsub-cmd" style="display:none; margin-top: 16px;"></div>
+        <button id="copyBtn" onclick="copyCommand()" style="display:none; margin-top: 8px;">📋 复制命令</button>
+    </div>
+
+    <script>
+        let eventSource = null;
+        
+        function getServiceUrl() {
+            return document.getElementById('serviceUrl').value.replace(/\/$/, '');
+        }
+        
+        function connect() {
+            if (eventSource) {
+                eventSource.close();
+            }
+            
+            const serviceUrl = getServiceUrl();
+            const channelId = document.getElementById('channelId').value;
+            
+            if (!channelId) {
+                alert('请输入 Channel ID');
+                return;
+            }
+            
+            const url = `${serviceUrl}/sse/connect?channel_id=${encodeURIComponent(channelId)}`;
+            
+            updateStatus('connecting');
+            document.getElementById('sseUrl').style.display = 'block';
+            document.getElementById('sseUrl').textContent = '连接 URL: ' + url;
+            
+            addEvent('system', `正在连接 ${channelId}...`);
+            
+            eventSource = new EventSource(url);
+            
+            eventSource.onopen = () => {
+                updateStatus('connected', channelId);
+                addEvent('system', `✅ 连接成功！正在监听 channel: ${channelId}`);
+            };
+            
+            eventSource.onerror = (e) => {
+                if (eventSource.readyState === EventSource.CLOSED) {
+                    updateStatus('disconnected');
+                    addEvent('system', '❌ 连接已关闭');
+                } else if (eventSource.readyState === EventSource.CONNECTING) {
+                    updateStatus('connecting');
+                    addEvent('system', '🔄 正在重连...');
+                }
+            };
+            
+            // 监听各种事件类型
+            ['heartbeat', 'notification', 'message', 'update', 'alert'].forEach(type => {
+                eventSource.addEventListener(type, (e) => {
+                    addEvent(type, e.data, type === 'heartbeat');
+                });
+            });
+            
+            eventSource.onmessage = (e) => {
+                addEvent('message', e.data);
+            };
+        }
+        
+        function disconnect() {
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+                updateStatus('disconnected');
+                addEvent('system', '🔌 已主动断开连接');
+            }
+        }
+        
+        function updateStatus(status, channelId = '') {
+            const el = document.getElementById('connectionStatus');
+            if (status === 'connected') {
+                el.className = 'status connected';
+                el.innerHTML = `<span>🟢</span> 已连接 (${channelId})`;
+            } else if (status === 'connecting') {
+                el.className = 'status connecting';
+                el.innerHTML = `<span>🟡</span> 连接中...`;
+            } else {
+                el.className = 'status disconnected';
+                el.innerHTML = `<span>⭕</span> 未连接`;
+            }
+        }
+        
+        function addEvent(type, data, isHeartbeat = false) {
+            const el = document.getElementById('events');
+            const time = new Date().toLocaleTimeString();
+            const eventDiv = document.createElement('div');
+            eventDiv.className = 'event ' + type + (isHeartbeat ? ' heartbeat' : '');
+            
+            let displayData = data;
+            try {
+                const parsed = JSON.parse(data);
+                displayData = JSON.stringify(parsed, null, 2);
+            } catch (e) {}
+            
+            eventDiv.innerHTML = `
+                <div><span class="event-time">[${time}]</span> <span class="event-type">${type}</span></div>
+                <div style="margin-top: 4px; color: #ccc;">${displayData}</div>
+            `;
+            el.appendChild(eventDiv);
+            el.scrollTop = el.scrollHeight;
+        }
+        
+        function clearEvents() {
+            document.getElementById('events').innerHTML = '';
+        }
+        
+        function generateCommand() {
+            const channelId = document.getElementById('channelId').value;
+            const eventType = document.getElementById('eventType').value;
+            let messageData = document.getElementById('messageData').value;
+            
+            // 验证 JSON
+            try {
+                JSON.parse(messageData);
+            } catch (e) {
+                alert('消息内容必须是有效的 JSON');
+                return;
+            }
+            
+            // 转义单引号
+            messageData = messageData.replace(/'/g, "'\\''");
+            
+            const command = `gcloud pubsub topics publish gateway-subscription \\
+  --message='${messageData}' \\
+  --attribute=channel_id=${channelId},event_type=${eventType}`;
+            
+            document.getElementById('pubsubCommand').textContent = command;
+            document.getElementById('pubsubCommand').style.display = 'block';
+            document.getElementById('copyBtn').style.display = 'inline-block';
+        }
+        
+        function copyCommand() {
+            const command = document.getElementById('pubsubCommand').textContent;
+            navigator.clipboard.writeText(command).then(() => {
+                const btn = document.getElementById('copyBtn');
+                btn.textContent = '✅ 已复制!';
+                setTimeout(() => { btn.textContent = '📋 复制命令'; }, 2000);
+            });
+        }
+        
+        // 页面加载时添加提示
+        addEvent('system', '👋 欢迎！点击「连接」按钮开始测试');
+    </script>
+</body>
+</html>

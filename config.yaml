@@ -1,0 +1,12 @@
+server:
+  port: 8080
+
+pubsub:
+  # 通过环境变量设置: GCP_PROJECT, PUBSUB_SUBSCRIPTION
+  project_id: ""
+  subscription_id: ""
+
+# Redis 配置（可选，用于消息重放）
+# 通过环境变量设置: REDIS_URL
+redis:
+  # url: "redis://localhost:6379"

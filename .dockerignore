@@ -1,0 +1,37 @@
+# Build artifacts
+target/
+debug/
+*.pdb
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile*
+docker-compose*
+
+# Documentation
+*.md
+docs/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+cloudbuild.yaml
+
+# Local config overrides
+config.local.yaml
+.env
+.env.*
+
+# Logs
+*.log
+logs/

@@ -1,0 +1,31 @@
+# Rust build artifacts
+/target/
+debug/
+**/*.rs.bk
+*.pdb
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Local configuration
+config.local.yaml
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Dependency lock file (optional - you may want to commit this)
+# Cargo.lock
