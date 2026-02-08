@@ -1,65 +1,102 @@
 # SSE Gateway API
 
-**服务地址**: `https://gateway-sse-912773111852.asia-east1.run.app`
+## Features
 
-## 特性
-
-- 基于 channel_id 的消息路由
-- **消息重放**：断线重连自动补发错过的消息（需配置 Redis）
-- 多实例部署支持
+- Channel-based message routing via `channel_id`
+- **Message Replay**: Automatically resend missed messages on reconnection (requires Redis)
+- Multi-instance deployment support
+- Real-time Server-Sent Events (SSE)
 
 ---
 
-## 前端：连接与接收消息
+## Endpoints
 
-### JavaScript / TypeScript
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/sse/connect?channel_id={id}` | GET | Connect to SSE stream for a specific channel |
+| `/health` | GET | Health check endpoint |
+| `/dashboard` | GET | Web dashboard (if enabled) |
+
+---
+
+## Frontend: Connect & Receive Messages
+
+### Basic Usage
 
 ```javascript
-// 连接指定 channel
-const sse = new EventSource('https://gateway-sse-912773111852.asia-east1.run.app/sse/connect?channel_id=my-channel');
+const SERVICE_URL = 'https://your-service-url.run.app';
 
-// 收消息
+// Connect to a specific channel
+const sse = new EventSource(`${SERVICE_URL}/sse/connect?channel_id=my-channel`);
+
+// Receive messages
 sse.addEventListener('notification', (e) => {
   const data = JSON.parse(e.data);
-  console.log('收到:', data);
+  console.log('Received:', data);
 });
 
-// 连接状态
-sse.onopen = () => console.log('已连接');
-sse.onerror = () => console.log('连接断开');
+// Connection status
+sse.onopen = () => console.log('Connected');
+sse.onerror = () => console.log('Disconnected');
 
-// 断开连接
+// Disconnect
 sse.close();
 ```
 
-### React Hook
+### Complete Example
 
-```typescript
-function useSSE(channelId: string) {
-  const [messages, setMessages] = useState<any[]>([]);
+```html
+<!DOCTYPE html>
+<html>
+<head>
+  <title>SSE Client</title>
+</head>
+<body>
+  <div id="status">Disconnected</div>
+  <div id="messages"></div>
 
-  useEffect(() => {
-    const sse = new EventSource(
-      `https://gateway-sse-912773111852.asia-east1.run.app/sse/connect?channel_id=${channelId}`
-    );
-
+  <script>
+    const SERVICE_URL = 'https://your-service-url.run.app';
+    const channelId = 'my-channel';
+    
+    const statusEl = document.getElementById('status');
+    const messagesEl = document.getElementById('messages');
+    
+    // Connect
+    const sse = new EventSource(`${SERVICE_URL}/sse/connect?channel_id=${channelId}`);
+    
+    sse.onopen = () => {
+      statusEl.textContent = 'Connected';
+      statusEl.style.color = 'green';
+    };
+    
+    sse.onerror = () => {
+      statusEl.textContent = 'Disconnected';
+      statusEl.style.color = 'red';
+    };
+    
+    // Listen for notifications
     sse.addEventListener('notification', (e) => {
-      setMessages(prev => [...prev, JSON.parse(e.data)]);
+      const data = JSON.parse(e.data);
+      const div = document.createElement('div');
+      div.textContent = JSON.stringify(data);
+      messagesEl.appendChild(div);
     });
-
-    return () => sse.close();
-  }, [channelId]);
-
-  return messages;
-}
-
-// 使用
-const messages = useSSE('my-channel');
+    
+    // Listen for all message types
+    sse.onmessage = (e) => {
+      console.log('Message:', e.data);
+    };
+  </script>
+</body>
+</html>
 ```
 
 ---
 
-## 后端：发送消息
+## Backend: Send Messages
+
+Messages are sent via Google Cloud Pub/Sub. The gateway subscribes to the topic and broadcasts messages to connected clients.
 
 ### Python
 
@@ -67,65 +104,162 @@ const messages = useSSE('my-channel');
 from google.cloud import pubsub_v1
 
 publisher = pubsub_v1.PublisherClient()
-topic = 'projects/hui-test-486414/topics/gateway-subscription'
+topic = 'projects/YOUR_PROJECT_ID/topics/gateway-subscription'
 
-# 发送到指定 channel
-publisher.publish(topic, b'{"msg": "hello"}', channel_id='my-channel', event_type='notification')
+# Send to a specific channel
+publisher.publish(
+    topic,
+    b'{"msg": "hello"}',
+    channel_id='my-channel',
+    event_type='notification'
+)
 
-# 广播（不带 channel_id）
-publisher.publish(topic, b'{"msg": "broadcast"}', event_type='announcement')
+# Broadcast to all connections (no channel_id)
+publisher.publish(
+    topic,
+    b'{"msg": "broadcast to all"}',
+    event_type='announcement'
+)
 ```
 
 ### Node.js
 
 ```javascript
 const { PubSub } = require('@google-cloud/pubsub');
-const pubsub = new PubSub({ projectId: 'hui-test-486414' });
+const pubsub = new PubSub({ projectId: 'YOUR_PROJECT_ID' });
 
-// 发送到指定 channel
+// Send to a specific channel
 await pubsub.topic('gateway-subscription').publishMessage({
   data: Buffer.from(JSON.stringify({ msg: 'hello' })),
   attributes: { channel_id: 'my-channel', event_type: 'notification' }
+});
+
+// Broadcast to all
+await pubsub.topic('gateway-subscription').publishMessage({
+  data: Buffer.from(JSON.stringify({ msg: 'broadcast' })),
+  attributes: { event_type: 'announcement' }
 });
 ```
 
 ### Go
 
 ```go
-client, _ := pubsub.NewClient(ctx, "hui-test-486414")
+import "cloud.google.com/go/pubsub"
 
+client, _ := pubsub.NewClient(ctx, "YOUR_PROJECT_ID")
+
+// Send to a specific channel
 client.Topic("gateway-subscription").Publish(ctx, &pubsub.Message{
     Data:       []byte(`{"msg": "hello"}`),
-    Attributes: map[string]string{"channel_id": "my-channel", "event_type": "notification"},
+    Attributes: map[string]string{
+        "channel_id": "my-channel",
+        "event_type": "notification",
+    },
 })
+```
+
+### Rust
+
+```rust
+use google_cloud_pubsub::client::Client;
+
+let client = Client::default().await?;
+let topic = client.topic("gateway-subscription");
+
+topic.publish(PubsubMessage {
+    data: r#"{"msg": "hello"}"#.into(),
+    attributes: [
+        ("channel_id".into(), "my-channel".into()),
+        ("event_type".into(), "notification".into()),
+    ].into(),
+    ..Default::default()
+}).await?;
 ```
 
 ### gcloud CLI
 
 ```bash
+# Send to a specific channel
 gcloud pubsub topics publish gateway-subscription \
   --message='{"msg":"hello"}' \
   --attribute=channel_id=my-channel,event_type=notification
+
+# Broadcast to all
+gcloud pubsub topics publish gateway-subscription \
+  --message='{"msg":"broadcast"}' \
+  --attribute=event_type=announcement
 ```
 
 ---
 
-## 消息属性
+## Message Attributes
 
-| 属性 | 说明 |
-|------|------|
-| `channel_id` | 目标频道。不填 = 广播给所有连接 |
-| `event_type` | 事件类型，前端用 `addEventListener(event_type, ...)` 监听 |
+| Attribute | Required | Description |
+|-----------|----------|-------------|
+| `channel_id` | No | Target channel. If omitted, message is broadcast to all connections |
+| `event_type` | No | Event type for frontend `addEventListener()`. Default: `message` |
 
 ---
 
-## 事件类型
+## Event Types
 
-前端监听对应的 `event_type`：
+The frontend listens to specific event types using `addEventListener()`:
 
 ```javascript
-sse.addEventListener('notification', (e) => { /* 通知 */ });
-sse.addEventListener('message', (e) => { /* 消息 */ });
-sse.addEventListener('update', (e) => { /* 更新 */ });
-sse.addEventListener('heartbeat', (e) => { /* 心跳，每30秒 */ });
+// Custom event types
+sse.addEventListener('notification', (e) => { /* notifications */ });
+sse.addEventListener('message', (e) => { /* messages */ });
+sse.addEventListener('update', (e) => { /* updates */ });
+sse.addEventListener('alert', (e) => { /* alerts */ });
+
+// System events
+sse.addEventListener('heartbeat', (e) => { /* heartbeat every 30s */ });
 ```
+
+---
+
+## Message Replay (Reconnection)
+
+When Redis is configured, the gateway supports automatic message replay on reconnection:
+
+```javascript
+// The browser automatically sends Last-Event-ID on reconnection
+// The gateway will replay any missed messages
+
+const sse = new EventSource('/sse/connect?channel_id=my-channel');
+
+// Each message includes an ID for replay tracking
+sse.onmessage = (e) => {
+  console.log('Message ID:', e.lastEventId);
+  console.log('Data:', e.data);
+};
+```
+
+---
+
+## Error Handling
+
+```javascript
+const sse = new EventSource('/sse/connect?channel_id=my-channel');
+
+sse.onerror = (e) => {
+  if (sse.readyState === EventSource.CONNECTING) {
+    console.log('Reconnecting...');
+  } else if (sse.readyState === EventSource.CLOSED) {
+    console.log('Connection closed');
+    // Implement custom reconnection logic if needed
+  }
+};
+```
+
+---
+
+## Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `GCP_PROJECT` | Google Cloud Project ID | Required |
+| `PUBSUB_SUBSCRIPTION` | Pub/Sub subscription name | Required |
+| `REDIS_URL` | Redis URL for message replay | Optional |
+| `ENABLE_DASHBOARD` | Enable web dashboard | `true` |
+| `RUST_LOG` | Log level | `info` |

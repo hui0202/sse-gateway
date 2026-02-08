@@ -10,19 +10,13 @@ spec:
   template:
     metadata:
       annotations:
-        # 自动扩缩容配置
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/maxScale: "10"
-        # 启动探针超时
         run.googleapis.com/startup-cpu-boost: "true"
-        # SSE 长连接必须: 禁用 CPU 限流，否则连接会断开
         run.googleapis.com/cpu-throttling: "false"
-        # 会话亲和性: 确保同一客户端的请求路由到同一实例
         run.googleapis.com/sessionAffinity: "true"
     spec:
-      # 每个容器最大并发连接数 (Cloud Run 上限 1000)
       containerConcurrency: 1000
-      # 请求超时 (SSE 长连接需要长超时)
       timeoutSeconds: 3600
       containers:
         - image: gcr.io/PROJECT_ID/gateway-sse:latest
@@ -35,7 +29,6 @@ spec:
           env:
             - name: RUST_LOG
               value: info
-            # 从 Secret Manager 读取敏感配置
             - name: GCP_PROJECT
               valueFrom:
                 secretKeyRef:
@@ -46,13 +39,6 @@ spec:
                 secretKeyRef:
                   name: PUBSUB_SUBSCRIPTION
                   key: latest
-            # Redis（可选，用于消息重放）
-            # - name: REDIS_URL
-            #   valueFrom:
-            #     secretKeyRef:
-            #       name: REDIS_URL
-            #       key: latest
-          # 启动探针 - 给应用更多时间启动
           startupProbe:
             httpGet:
               path: /health

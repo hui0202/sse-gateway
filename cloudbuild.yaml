@@ -1,13 +1,10 @@
-# Google Cloud Build configuration for deploying to Cloud Run
 steps:
-  # Pull previous image for cache (ignore if not exists)
   - name: 'gcr.io/cloud-builders/docker'
     entrypoint: 'bash'
     args:
       - '-c'
       - 'docker pull gcr.io/$PROJECT_ID/gateway:latest || exit 0'
 
-  # Build the container image with cache
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'build'
@@ -19,7 +16,6 @@ steps:
       - 'gcr.io/$PROJECT_ID/gateway:latest'
       - '.'
 
-  # Push the container image to Container Registry
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
@@ -30,7 +26,6 @@ steps:
       - 'push'
       - 'gcr.io/$PROJECT_ID/gateway:latest'
 
-  # Deploy to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -57,7 +52,6 @@ steps:
       - '--timeout'
       - '${_TIMEOUT}'
 
-# Substitution variables with defaults
 substitutions:
   _REGION: 'asia-east1'
   _MIN_INSTANCES: '1'

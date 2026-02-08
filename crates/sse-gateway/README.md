@@ -2,7 +2,12 @@
 
 A lightweight, pluggable SSE (Server-Sent Events) gateway library for Rust.
 
-See the [main README](../../README.md) for full documentation.
+## Official Adapters
+
+| Crate | Description |
+|-------|-------------|
+| [`sse-gateway-redis`](https://crates.io/crates/sse-gateway-redis) | Redis Pub/Sub source + Redis Streams storage |
+| [`sse-gateway-gcp`](https://crates.io/crates/sse-gateway-gcp) | Google Cloud Pub/Sub source |
 
 ## Features
 
@@ -67,5 +72,56 @@ impl MessageStorage for MyStorage {
 
     async fn is_available(&self) -> bool { true }
     fn name(&self) -> &'static str { "MyStorage" }
+}
+```
+
+## Using with Redis
+
+```toml
+[dependencies]
+sse-gateway = "0.1"
+sse-gateway-redis = "0.1"
+```
+
+```rust
+use sse_gateway::Gateway;
+use sse_gateway_redis::{RedisPubSubSource, RedisStorage};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let storage = RedisStorage::new();
+    storage.connect("redis://localhost:6379").await?;
+
+    Gateway::builder()
+        .port(8080)
+        .source(RedisPubSubSource::with_defaults("redis://localhost:6379"))
+        .storage(storage)
+        .build()?
+        .run()
+        .await
+}
+```
+
+## Using with Google Cloud Pub/Sub
+
+```toml
+[dependencies]
+sse-gateway = "0.1"
+sse-gateway-gcp = "0.1"
+```
+
+```rust
+use sse_gateway::{Gateway, MemoryStorage};
+use sse_gateway_gcp::GcpPubSubSource;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    Gateway::builder()
+        .port(8080)
+        .source(GcpPubSubSource::new("my-project", "my-subscription"))
+        .storage(MemoryStorage::default())
+        .build()?
+        .run()
+        .await
 }
 ```
