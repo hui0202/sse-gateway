@@ -8,6 +8,7 @@ repository.workspace = true
 authors.workspace = true
 keywords = ["sse", "redis", "pubsub", "streams"]
 categories = ["web-programming", "asynchronous"]
+readme = "README.md"
 
 [dependencies]
 sse-gateway = { workspace = true }
