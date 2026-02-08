@@ -14,6 +14,7 @@ debug/
 # Environment files
 .env
 .env.*
+.envrc
 !.env.example
 
 # Local configuration
