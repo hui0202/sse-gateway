@@ -1,7 +1,3 @@
-//! SSE Gateway - GCP Pub/Sub Server
-//!
-//! 专门用于 Google Cloud Pub/Sub 的 SSE Gateway 服务
-
 use sse_gateway::{Gateway, MemoryStorage};
 use sse_gateway_gcp::GcpPubSubSource;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
