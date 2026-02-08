@@ -26,9 +26,14 @@ pub struct SseEvent {
     /// Event data
     pub data: EventData,
     
-    /// Optional event ID for client-side tracking
+    /// Business ID for client-side tracking (e.g., UUID)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    
+    /// Redis Stream ID for reconnection replay
+    /// This is used as SSE's `id` field for `last-event-id` header
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_id: Option<String>,
     
     /// Optional retry interval in milliseconds
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -41,6 +46,7 @@ impl SseEvent {
             event_type: event_type.into(),
             data: EventData::Value(data),
             id: Some(uuid::Uuid::new_v4().to_string()),
+            stream_id: None,
             retry: None,
         }
     }
@@ -50,8 +56,14 @@ impl SseEvent {
             event_type: event_type.into(),
             data: EventData::Raw(raw_json),
             id: Some(uuid::Uuid::new_v4().to_string()),
+            stream_id: None,
             retry: None,
         }
     }
 
+    /// Set the stream_id (Redis Stream ID) for reconnection support
+    pub fn with_stream_id(mut self, stream_id: String) -> Self {
+        self.stream_id = Some(stream_id);
+        self
+    }
 }

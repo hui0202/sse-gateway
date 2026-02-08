@@ -18,11 +18,15 @@ pub struct SseConnectParams {
 }
 
 fn sse_event_to_axum(sse_event: SseEvent) -> Event {
+    let data = sse_event.data.to_string();
+
     let event = Event::default()
         .event(&sse_event.event_type)
-        .data(sse_event.data.to_string());
+        .data(data);
     
-    let event = if let Some(id) = &sse_event.id {
+    let event = if let Some(stream_id) = &sse_event.stream_id {
+        event.id(stream_id.clone())
+    } else if let Some(id) = &sse_event.id {
         event.id(id.clone())
     } else {
         event
@@ -81,7 +85,6 @@ pub async fn sse_connect(
         "SSE connection established"
     );
 
-    // 获取需要重放的消息
     let replay_messages = state.message_store.get_messages_after(
         &params.channel_id,
         last_event_id.as_deref(),

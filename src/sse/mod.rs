@@ -4,4 +4,4 @@ mod event;
 
 pub use connection::{SseConnection, ConnectionId};
 pub use manager::ConnectionManager;
-pub use event::SseEvent;
+pub use event::{SseEvent, EventData};

@@ -1,12 +1,12 @@
-use redis::{aio::ConnectionManager, AsyncCommands};
+use redis::aio::ConnectionManager;
+use redis::streams::{StreamRangeReply, StreamId};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
-use crate::sse::SseEvent;
+use crate::sse::{SseEvent, EventData};
 
-const MAX_MESSAGES_PER_CHANNEL: isize = 100;
-const MESSAGE_TTL_SECONDS: i64 = 3600;
+const MAX_MESSAGES_PER_CHANNEL: usize = 100;
 
 #[derive(Clone)]
 pub struct MessageStore {
@@ -35,36 +35,47 @@ impl MessageStore {
         self.redis.read().await.is_some()
     }
 
-    fn channel_key(channel_id: &str) -> String {
-        format!("sse:messages:{}", channel_id)
+    fn stream_key(channel_id: &str) -> String {
+        format!("sse:stream:{}", channel_id)
     }
 
-    pub async fn store(&self, channel_id: &str, event: &SseEvent) {
+    pub async fn store(&self, channel_id: &str, event: &SseEvent) -> Option<String> {
         let conn = self.redis.read().await;
         let Some(ref manager) = *conn else {
-            return;
+            return None;
         };
 
         let mut conn = manager.clone();
-        let key = Self::channel_key(channel_id);
+        let key = Self::stream_key(channel_id);
 
-        let message = match serde_json::to_string(event) {
-            Ok(m) => m,
-            Err(e) => {
-                error!(error = %e, "Failed to serialize message");
-                return;
+        let data_str = event.data.to_string();
+
+        let mut cmd = redis::cmd("XADD");
+        cmd.arg(&key)
+            .arg("MAXLEN")
+            .arg("~")  // 近似修剪，性能更好
+            .arg(MAX_MESSAGES_PER_CHANNEL)
+            .arg("*")  // 自动生成 stream_id
+            .arg("event_type")
+            .arg(&event.event_type)
+            .arg("data")
+            .arg(&data_str);
+        
+        if let Some(ref id) = event.id {
+            cmd.arg("id").arg(id);
+        }
+
+        let result: Result<String, redis::RedisError> = cmd.query_async(&mut conn).await;
+
+        match result {
+            Ok(stream_id) => {
+                info!(channel_id, stream_id = %stream_id, "Message stored in Redis Stream");
+                Some(stream_id)
             }
-        };
-
-        let result: Result<(), redis::RedisError> = redis::pipe()
-            .lpush(&key, &message)
-            .ltrim(&key, 0, MAX_MESSAGES_PER_CHANNEL - 1)
-            .expire(&key, MESSAGE_TTL_SECONDS)
-            .query_async(&mut conn)
-            .await;
-
-        if let Err(e) = result {
-            warn!(error = %e, channel_id, "Failed to store message in Redis");
+            Err(e) => {
+                warn!(error = %e, channel_id, "Failed to store message in Redis Stream");
+                None
+            }
         }
     }
 
@@ -76,43 +87,80 @@ impl MessageStore {
 
         let conn = self.redis.read().await;
         let Some(ref manager) = *conn else {
-            return vec![]; // Redis 未连接
+            return vec![];
         };
 
         let mut conn = manager.clone();
-        let key = Self::channel_key(channel_id);
+        let key = Self::stream_key(channel_id);
 
-        let messages: Vec<String> = match conn.lrange(&key, 0, MAX_MESSAGES_PER_CHANNEL - 1).await {
-            Ok(m) => m,
+        // XRANGE key (after_id +
+        // "(" 表示不包含 after_id 本身（exclusive）
+        let start = format!("({}", after_id);
+        
+        let result: Result<StreamRangeReply, redis::RedisError> = redis::cmd("XRANGE")
+            .arg(&key)
+            .arg(&start)
+            .arg("+")
+            .arg("COUNT")
+            .arg(MAX_MESSAGES_PER_CHANNEL)
+            .query_async(&mut conn)
+            .await;
+
+        match result {
+            Ok(reply) => {
+                let events = Self::parse_stream_entries(reply.ids);
+                info!(
+                    channel_id,
+                    after_id,
+                    count = events.len(),
+                    "Retrieved messages from Redis Stream"
+                );
+                events
+            }
             Err(e) => {
-                warn!(error = %e, channel_id, "Failed to get messages from Redis");
-                return vec![];
+                warn!(error = %e, channel_id, after_id, "Failed to get messages from Redis Stream");
+                vec![]
             }
-        };
+        }
+    }
 
-        let messages: Vec<SseEvent> = messages
+    fn parse_stream_entries(entries: Vec<StreamId>) -> Vec<SseEvent> {
+        entries
             .into_iter()
-            .rev()
-            .filter_map(|m| serde_json::from_str(&m).ok())
-            .collect();
+            .filter_map(|entry| {
+                let stream_id = entry.id;
+                let map = entry.map;
+                
+                let event_type = map.get("event_type")
+                    .and_then(|v| match v {
+                        redis::Value::BulkString(bytes) => String::from_utf8(bytes.clone()).ok(),
+                        redis::Value::SimpleString(s) => Some(s.clone()),
+                        _ => None,
+                    })?;
+                
+                let data = map.get("data")
+                    .and_then(|v| match v {
+                        redis::Value::BulkString(bytes) => String::from_utf8(bytes.clone()).ok(),
+                        redis::Value::SimpleString(s) => Some(s.clone()),
+                        _ => None,
+                    })?;
+                
+                let id = map.get("id")
+                    .and_then(|v| match v {
+                        redis::Value::BulkString(bytes) => String::from_utf8(bytes.clone()).ok(),
+                        redis::Value::SimpleString(s) => Some(s.clone()),
+                        _ => None,
+                    });
 
-        let mut found = false;
-        let mut result = Vec::new();
-
-        for msg in &messages {
-            if found {
-                result.push(msg.clone());
-            } else if msg.id.as_deref() == Some(after_id) {
-                found = true;
-            }
-        }
-
-        if !found {
-            warn!(channel_id, after_id, "Last-Event-ID not found, returning all cached messages");
-            return messages;
-        }
-
-        result
+                Some(SseEvent {
+                    event_type,
+                    data: EventData::Raw(data),
+                    id,
+                    stream_id: Some(stream_id),
+                    retry: None,
+                })
+            })
+            .collect()
     }
 }
 

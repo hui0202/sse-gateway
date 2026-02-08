@@ -48,15 +48,15 @@ impl PubSubSubscriber {
                         let event_type = msg.attributes.get("event_type").map(|s| s.as_str()).unwrap_or("message");
 
                         let data_str = String::from_utf8_lossy(&msg.data).to_string();
-                        let event = SseEvent::raw(event_type, data_str);
-
-                        // 存储消息用于重放
-                        if let Some(id) = channel_id {
-                            ms.store(id, &event).await;
-                        }
+                        let mut event = SseEvent::raw(event_type, data_str);
 
                         let sent = match channel_id {
-                            Some(id) => cm.send_to_channel(id, event).await,
+                            Some(id) => {
+                                if let Some(stream_id) = ms.store(id, &event).await {
+                                    event.stream_id = Some(stream_id);
+                                }
+                                cm.send_to_channel(id, event).await
+                            }
                             None => cm.broadcast(event).await,
                         };
 
