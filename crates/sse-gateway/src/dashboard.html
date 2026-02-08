@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSE Gateway Dashboard</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { margin-bottom: 20px; display: flex; align-items: center; gap: 10px; }
+        .dot { width: 10px; height: 10px; background: #22c55e; border-radius: 50%; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+        .card { background: #1e293b; border-radius: 12px; padding: 20px; border: 1px solid #334155; }
+        .card h2 { font-size: 14px; color: #94a3b8; margin-bottom: 15px; text-transform: uppercase; }
+        .stat { font-size: 48px; font-weight: bold; }
+        label { display: block; font-size: 12px; color: #94a3b8; margin-bottom: 5px; }
+        input, textarea { width: 100%; padding: 10px; background: #0f172a; border: 1px solid #334155; border-radius: 6px; color: #e2e8f0; margin-bottom: 10px; }
+        button { padding: 10px 20px; background: #3b82f6; color: white; border: none; border-radius: 6px; cursor: pointer; }
+        button:hover { background: #2563eb; }
+        .events { height: 200px; overflow-y: auto; background: #0f172a; border-radius: 6px; padding: 10px; font-family: monospace; font-size: 12px; }
+        .event { padding: 5px; border-left: 2px solid #3b82f6; margin-bottom: 5px; padding-left: 10px; }
+        .status { display: inline-block; padding: 4px 10px; border-radius: 20px; font-size: 12px; }
+        .status.connected { background: #22c55e20; color: #22c55e; }
+        .status.disconnected { background: #ef444420; color: #ef4444; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1><span class="dot"></span> SSE Gateway</h1>
+        <div class="grid">
+            <div class="card">
+                <h2>Connections</h2>
+                <div class="stat" id="count">0</div>
+            </div>
+            <div class="card">
+                <h2>Test Connection</h2>
+                <label>Channel ID</label>
+                <input type="text" id="channelId" value="test">
+                <button onclick="connect()">Connect</button>
+                <button onclick="disconnect()">Disconnect</button>
+                <div style="margin-top:10px"><span id="status" class="status disconnected">Disconnected</span></div>
+            </div>
+            <div class="card">
+                <h2>Send Message</h2>
+                <label>Channel (empty = broadcast)</label>
+                <input type="text" id="targetChannel">
+                <label>Event Type</label>
+                <input type="text" id="eventType" value="message">
+                <label>Data (JSON)</label>
+                <textarea id="data">{"text": "Hello!"}</textarea>
+                <button onclick="send()">Send</button>
+            </div>
+            <div class="card">
+                <h2>Events</h2>
+                <div class="events" id="events"></div>
+            </div>
+        </div>
+    </div>
+    <script>
+        let es = null;
+        const refresh = () => fetch('/api/stats').then(r => r.json()).then(d => document.getElementById('count').textContent = d.total_connections);
+        const connect = () => {
+            if (es) es.close();
+            es = new EventSource('/sse/connect?channel_id=' + document.getElementById('channelId').value);
+            es.onopen = () => { document.getElementById('status').className = 'status connected'; document.getElementById('status').textContent = 'Connected'; refresh(); };
+            es.onerror = () => { document.getElementById('status').className = 'status disconnected'; document.getElementById('status').textContent = 'Disconnected'; };
+            es.onmessage = e => addEvent('message', e.data);
+            ['notification', 'heartbeat'].forEach(t => es.addEventListener(t, e => addEvent(t, e.data)));
+        };
+        const disconnect = () => { if (es) { es.close(); es = null; } document.getElementById('status').className = 'status disconnected'; document.getElementById('status').textContent = 'Disconnected'; setTimeout(refresh, 500); };
+        const send = () => {
+            fetch('/api/send', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    channel_id: document.getElementById('targetChannel').value || null,
+                    event_type: document.getElementById('eventType').value,
+                    data: JSON.parse(document.getElementById('data').value)
+                })
+            });
+        };
+        const addEvent = (type, data) => {
+            const el = document.getElementById('events');
+            el.innerHTML = `<div class="event"><b>${type}:</b> ${data}</div>` + el.innerHTML;
+        };
+        setInterval(refresh, 3000);
+        refresh();
+    </script>
+</body>
+</html>

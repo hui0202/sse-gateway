@@ -2,42 +2,74 @@
 name = "gateway"
 version = "0.1.0"
 edition = "2021"
-description = "SSE gateway with Google Cloud Pub/Sub"
+description = "SSE Gateway with GCP Pub/Sub"
+
+[[bin]]
+name = "gateway"
+path = "src/main.rs"
 
 [dependencies]
-# Web framework
-axum = { version = "0.8", features = ["macros"] }
+sse-gateway = { path = "crates/sse-gateway" }
+sse-gateway-gcp = { path = "crates/sse-gateway-gcp" }
+tokio = { version = "1", features = ["full"] }
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+async-trait = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = "0.4"
+axum = "0.8"
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/sse-gateway",
+    "crates/sse-gateway-redis",
+    "crates/sse-gateway-gcp",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/example/sse-gateway"
+authors = ["Your Name <your@email.com>"]
+
+[workspace.dependencies]
+# Core
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 tokio-util = "0.7"
+async-trait = "0.1"
+futures = "0.3"
+
+# Web
+axum = { version = "0.8", features = ["macros"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-serde_yaml = "0.9"
+
+# Utilities
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+dashmap = "6.0"
+anyhow = "1.0"
+thiserror = "1.0"
 
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
-# Error handling
-anyhow = "1.0"
-
-# Utilities
-uuid = { version = "1.0", features = ["v4", "serde"] }
-chrono = { version = "0.4", features = ["serde"] }
-futures = "0.3"
-
-# Connection management
-dashmap = "6.0"
-
-# Google Cloud Pub/Sub
-google-cloud-pubsub = "0.30.0"
+# Optional backends
 redis = { version = "1.0.3", features = ["tokio-rustls-comp", "tls-rustls-webpki-roots", "connection-manager"] }
+google-cloud-pubsub = "0.30.0"
 
-[profile.release]
-lto = "thin"
-codegen-units = 16
-panic = "abort"
-strip = true
+# Internal crates (path for local dev, version for publishing)
+sse-gateway = { version = "0.1.0", path = "crates/sse-gateway" }
+sse-gateway-redis = { version = "0.1.0", path = "crates/sse-gateway-redis" }
+sse-gateway-gcp = { version = "0.1.0", path = "crates/sse-gateway-gcp" }

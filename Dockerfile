@@ -51,7 +51,6 @@ COPY config.yaml* ./
 
 # Set environment variables for Cloud Run
 ENV RUST_LOG=info
-ENV CLOUD_RUN=true
 
 # Expose port (Cloud Run will set PORT env var)
 EXPOSE 8080

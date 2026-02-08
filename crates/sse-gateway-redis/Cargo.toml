@@ -1,0 +1,22 @@
+[package]
+name = "sse-gateway-redis"
+description = "Redis adapters for SSE Gateway (Pub/Sub source and Streams storage)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["sse", "redis", "pubsub", "streams"]
+categories = ["web-programming", "asynchronous"]
+
+[dependencies]
+sse-gateway = { workspace = true }
+redis = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tokio-util = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }

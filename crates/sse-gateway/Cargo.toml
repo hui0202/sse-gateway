@@ -1,0 +1,45 @@
+[package]
+name = "sse-gateway"
+description = "A lightweight, pluggable SSE (Server-Sent Events) gateway library"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["sse", "server-sent-events", "gateway", "realtime", "push"]
+categories = ["web-programming", "asynchronous", "network-programming"]
+readme = "README.md"
+
+[dependencies]
+# Core async
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tokio-util = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+# Web (optional, for built-in server)
+axum = { workspace = true, optional = true }
+tower-http = { workspace = true, optional = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Utilities
+uuid = { workspace = true }
+chrono = { workspace = true }
+dashmap = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+[features]
+default = ["server"]
+# Include built-in Axum server
+server = ["dep:axum", "dep:tower-http"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
