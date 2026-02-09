@@ -39,7 +39,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.2"
+version = "2.0.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/hui200102/sse-gateway"
@@ -79,6 +79,6 @@ redis = { version = "1.0.3", features = ["tokio-rustls-comp", "tls-rustls-webpki
 google-cloud-pubsub = "0.30.0"
 
 # Internal crates (path for local dev, version for publishing)
-sse-gateway = { version = "0.1.1", path = "crates/sse-gateway" }
-sse-gateway-redis = { version = "0.1.0", path = "crates/sse-gateway-redis" }
-sse-gateway-gcp = { version = "0.1.0", path = "crates/sse-gateway-gcp" }
+sse-gateway = { version = "2.0.0", path = "crates/sse-gateway" }
+sse-gateway-redis = { version = "2.0.0", path = "crates/sse-gateway-redis" }
+sse-gateway-gcp = { version = "2.0.0", path = "crates/sse-gateway-gcp" }

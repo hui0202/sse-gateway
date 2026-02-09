@@ -1809,7 +1809,7 @@ dependencies = [
 
 [[package]]
 name = "sse-gateway"
-version = "0.1.2"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1830,7 +1830,7 @@ dependencies = [
 
 [[package]]
 name = "sse-gateway-gcp"
-version = "0.1.2"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1843,7 +1843,7 @@ dependencies = [
 
 [[package]]
 name = "sse-gateway-redis"
-version = "0.1.2"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
