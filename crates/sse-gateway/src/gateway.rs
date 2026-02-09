@@ -12,7 +12,7 @@ use tower_http::{
 };
 
 // Error types now use anyhow for better ergonomics
-use crate::handler;
+use crate::{auth::AuthFn, handler};
 use crate::manager::ConnectionManager;
 use crate::source::{IncomingMessage, MessageSource, NoopSource};
 use crate::storage::{MemoryStorage, MessageStorage, NoopStorage};
@@ -27,6 +27,7 @@ pub struct Gateway<Source: MessageSource, Storage: MessageStorage> {
     enable_dashboard: bool,
     heartbeat_interval: Duration,
     cleanup_interval: Duration,
+    auth: Option<AuthFn>,
 }
 
 impl<Source: MessageSource, Storage: MessageStorage> Gateway<Source, Storage> {
@@ -45,6 +46,7 @@ impl<Source: MessageSource, Storage: MessageStorage> Gateway<Source, Storage> {
         let state = handler::GatewayState {
             connection_manager: self.connection_manager.clone(),
             storage: self.storage.clone(),
+            auth: self.auth.clone(),
         };
 
         // Start message source
@@ -173,6 +175,7 @@ pub struct GatewayBuilder<Source = NoopSource, Storage = NoopStorage> {
     enable_dashboard: bool,
     heartbeat_interval: Duration,
     cleanup_interval: Duration,
+    auth: Option<AuthFn>,
 }
 
 impl Default for GatewayBuilder {
@@ -185,6 +188,7 @@ impl Default for GatewayBuilder {
             enable_dashboard: true,
             heartbeat_interval: Duration::from_secs(30),
             cleanup_interval: Duration::from_secs(30),
+            auth: None,
         }
     }
 }
@@ -213,6 +217,7 @@ impl<Source, Storage> GatewayBuilder<Source, Storage> {
             enable_dashboard: self.enable_dashboard,
             heartbeat_interval: self.heartbeat_interval,
             cleanup_interval: self.cleanup_interval,
+            auth: self.auth,
         }
     }
 
@@ -226,7 +231,44 @@ impl<Source, Storage> GatewayBuilder<Source, Storage> {
             enable_dashboard: self.enable_dashboard,
             heartbeat_interval: self.heartbeat_interval,
             cleanup_interval: self.cleanup_interval,
+            auth: self.auth,
         }
+    }
+
+    /// Set the authentication callback
+    ///
+    /// The callback receives an `AuthRequest` containing headers, channel_id, and client_ip.
+    /// Return `None` to allow the connection, or `Some(Response)` to deny with a custom response.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use sse_gateway::{Gateway, MemoryStorage, NoopSource};
+    /// use sse_gateway::auth::{AuthRequest, deny};
+    /// use axum::http::StatusCode;
+    ///
+    /// Gateway::builder()
+    ///     .port(8080)
+    ///     .source(NoopSource)
+    ///     .storage(MemoryStorage::default())
+    ///     .auth(|req: AuthRequest| async move {
+    ///         match req.bearer_token() {
+    ///             Some(token) if token == "secret" => None, // Allow
+    ///             Some(_) => Some(deny(StatusCode::UNAUTHORIZED, "Invalid token")),
+    ///             None => Some(deny(StatusCode::UNAUTHORIZED, "Token required")),
+    ///         }
+    ///     })
+    ///     .build()?
+    ///     .run()
+    ///     .await
+    /// ```
+    pub fn auth<F, Fut>(mut self, auth_fn: F) -> Self
+    where
+        F: Fn(crate::auth::AuthRequest) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = crate::auth::AuthResponse> + Send + 'static,
+    {
+        self.auth = Some(crate::auth::auth_fn(auth_fn));
+        self
     }
 
     /// Set the instance ID
@@ -261,6 +303,10 @@ impl<Source: MessageSource, Storage: MessageStorage> GatewayBuilder<Source, Stor
         let storage = self.storage.ok_or_else(|| anyhow::anyhow!("Storage is required"))?;
         let instance_id = self.instance_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
+        if self.auth.is_some() {
+            tracing::info!("Authentication enabled for SSE connections");
+        }
+
         Ok(Gateway {
             port: self.port,
             source,
@@ -269,6 +315,7 @@ impl<Source: MessageSource, Storage: MessageStorage> GatewayBuilder<Source, Stor
             enable_dashboard: self.enable_dashboard,
             heartbeat_interval: self.heartbeat_interval,
             cleanup_interval: self.cleanup_interval,
+            auth: self.auth,
         })
     }
 }

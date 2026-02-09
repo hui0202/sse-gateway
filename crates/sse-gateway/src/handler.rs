@@ -16,6 +16,7 @@ use std::{
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
 
+use crate::auth::{AuthFn, AuthRequest};
 use crate::event::SseEvent;
 use crate::manager::ConnectionManager;
 use crate::storage::MessageStorage;
@@ -25,6 +26,7 @@ use crate::storage::MessageStorage;
 pub struct GatewayState<S: MessageStorage> {
     pub connection_manager: ConnectionManager,
     pub storage: S,
+    pub auth: Option<AuthFn>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -56,7 +58,7 @@ pub async fn sse_connect<S: MessageStorage>(
     State(state): State<GatewayState<S>>,
     Query(params): Query<SseConnectParams>,
     headers: axum::http::HeaderMap,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+) -> axum::response::Response {
     let client_ip = headers
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
@@ -71,6 +73,25 @@ pub async fn sse_connect<S: MessageStorage>(
         .get("last-event-id")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
+
+    // Perform authentication if configured
+    if let Some(auth_fn) = &state.auth {
+        let auth_request = AuthRequest {
+            headers: headers.clone(),
+            channel_id: params.channel_id.clone(),
+            client_ip: client_ip.clone(),
+        };
+
+        // If auth returns Some(response), deny the connection
+        if let Some(response) = auth_fn(auth_request).await {
+            tracing::warn!(
+                channel_id = %params.channel_id,
+                client_ip = ?client_ip,
+                "SSE connection denied"
+            );
+            return response;
+        }
+    }
 
     tracing::info!(
         channel_id = %params.channel_id,
@@ -137,16 +158,19 @@ pub async fn sse_connect<S: MessageStorage>(
         })),
     };
 
-    Sse::new(final_stream).keep_alive(
-        axum::response::sse::KeepAlive::new()
-            .interval(Duration::from_secs(10))
-            .text("keep-alive"),
-    )
+    Sse::new(final_stream)
+        .keep_alive(
+            axum::response::sse::KeepAlive::new()
+                .interval(Duration::from_secs(10))
+                .text("keep-alive"),
+        )
+        .into_response()
 }
 
 struct CleanupStream<S> {
     inner: Pin<Box<S>>,
     cleanup: Option<Box<dyn FnOnce() + Send>>,
+    #[allow(dead_code)]
     connection_id: String,
 }
 

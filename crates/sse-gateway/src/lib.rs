@@ -9,6 +9,7 @@
 //! - **Channel-based Routing**: Route messages to specific channels or broadcast to all
 //! - **Built-in Server**: Optional Axum-based HTTP server with SSE endpoint
 //! - **Memory Efficient**: Designed for high-concurrency with minimal memory footprint
+//! - **Flexible Authentication**: Support for custom auth callbacks with channel-level permissions
 //!
 //! ## Quick Start
 //!
@@ -25,6 +26,29 @@
 //!         .run()
 //!         .await
 //! }
+//! ```
+//!
+//! ## With Authentication
+//!
+//! ```rust,ignore
+//! use sse_gateway::{Gateway, MemoryStorage, NoopSource};
+//! use sse_gateway::auth::{AuthRequest, deny};
+//! use axum::http::StatusCode;
+//!
+//! Gateway::builder()
+//!     .port(8080)
+//!     .source(NoopSource)
+//!     .storage(MemoryStorage::default())
+//!     .auth(|req: AuthRequest| async move {
+//!         // Return None to allow, Some(response) to deny
+//!         match req.bearer_token() {
+//!             Some(token) if token == "secret" => None,
+//!             _ => Some(deny(StatusCode::UNAUTHORIZED, "Invalid token")),
+//!         }
+//!     })
+//!     .build()?
+//!     .run()
+//!     .await
 //! ```
 //!
 //! ## Custom Message Source
@@ -53,6 +77,7 @@
 //! }
 //! ```
 
+pub mod auth;
 mod connection;
 mod error;
 mod event;
