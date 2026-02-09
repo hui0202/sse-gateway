@@ -1,6 +1,5 @@
 use sse_gateway::Gateway;
-use sse_gateway_gcp::GcpPubSubSource;
-use sse_gateway_redis::RedisStorage;
+use sse_gateway_redis::{RedisPubSubSource, RedisStorage};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -19,12 +18,6 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|p| p.parse().ok())
         .unwrap_or(8080);
 
-    let project = std::env::var("GCP_PROJECT")
-        .map_err(|_| anyhow::anyhow!("GCP_PROJECT environment variable required"))?;
-
-    let subscription = std::env::var("PUBSUB_SUBSCRIPTION")
-        .map_err(|_| anyhow::anyhow!("PUBSUB_SUBSCRIPTION environment variable required"))?;
-
     let redis_url = std::env::var("REDIS_URL")
         .unwrap_or_else(|_| "redis://localhost:6379".to_string());
 
@@ -34,15 +27,13 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!(
         port,
-        project = %project,
-        subscription = %subscription,
         redis_url = %redis_url,
-        "Starting SSE Gateway (GCP Pub/Sub + Redis)"
+        "Starting SSE Gateway (Redis)"
     );
 
     Gateway::builder()
         .port(port)
-        .source(GcpPubSubSource::new(&project, &subscription))
+        .source(RedisPubSubSource::with_defaults(&redis_url))
         .storage(storage)
         .build()?
         .run()

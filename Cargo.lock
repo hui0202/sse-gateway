@@ -523,7 +523,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sse-gateway",
- "sse-gateway-gcp",
  "sse-gateway-redis",
  "tokio",
  "tracing",
