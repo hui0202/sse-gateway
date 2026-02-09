@@ -44,7 +44,7 @@ gce_create_template() {
     PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
     SERVICE_ACCOUNT="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
     
-    CONTAINER_ENV="RUST_LOG=info,GCP_PROJECT=$PROJECT_ID,PUBSUB_SUBSCRIPTION=$SUBSCRIPTION_NAME"
+    CONTAINER_ENV="RUST_LOG=info,NO_COLOR=1,GCP_PROJECT=$PROJECT_ID,PUBSUB_SUBSCRIPTION=$SUBSCRIPTION_NAME"
     
     if secret_exists "REDIS_URL"; then
         CONTAINER_ENV="$CONTAINER_ENV,REDIS_URL=$(get_secret_value REDIS_URL)"
