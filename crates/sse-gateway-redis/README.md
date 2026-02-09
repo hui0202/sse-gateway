@@ -4,10 +4,10 @@ Redis adapters for SSE Gateway - Pub/Sub message source and Streams storage for 
 
 ## Features
 
-- **RedisPubSubSource**: Receive messages from Redis Pub/Sub
-- **RedisStorage**: Store messages in Redis Streams for replay on reconnection
-- Pattern-based channel subscription
-- Automatic message parsing (JSON and plain text)
+- **RedisPubSubSource**: Receive messages from Redis Pub/Sub with pattern subscription
+- **RedisStorage**: Store messages in Redis Streams with batching for high throughput
+- Automatic message cleanup with TTL and MAXLEN
+- High-performance batch writes
 
 ## Installation
 
@@ -23,7 +23,7 @@ sse-gateway-redis = "0.1"
 
 ### RedisPubSubSource
 
-Receives messages from Redis Pub/Sub channels.
+Receives messages from Redis Pub/Sub channels using pattern subscription.
 
 ```rust
 use sse_gateway::Gateway;
@@ -31,32 +31,34 @@ use sse_gateway_redis::RedisPubSubSource;
 
 let gateway = Gateway::builder()
     .source(RedisPubSubSource::with_defaults("redis://localhost:6379"))
+    .storage(sse_gateway::MemoryStorage::default())
     .build()?;
 ```
 
-#### Channel Naming Convention
+#### Default Behavior
 
-- `sse:{channel_id}` - Send to specific channel (e.g., `sse:user123`)
-- `sse:broadcast` - Broadcast to all connections
+By default, `with_defaults()` subscribes to pattern `*` (all channels).
 
-#### Message Format
+The Redis channel name is used directly as the SSE `channel_id`. For example:
+- Publishing to Redis channel `user123` → delivered to SSE channel `user123`
+- Publishing to Redis channel `notifications` → delivered to SSE channel `notifications`
 
-Messages can be plain text or JSON:
+#### Custom Patterns
 
-```json
-{
-  "event_type": "notification",
-  "data": {"text": "Hello!"},
-  "channel_id": "user123",
-  "id": "msg-001"
-}
+```rust
+// Subscribe to specific patterns
+let source = RedisPubSubSource::new(
+    "redis://localhost:6379",
+    vec![
+        "sse:*".to_string(),         // Match channels starting with "sse:"
+        "notifications:*".to_string(), // Match channels starting with "notifications:"
+    ]
+);
 ```
-
-If plain text, it's sent as a `message` event type.
 
 ### RedisStorage
 
-Stores messages in Redis Streams for replay when clients reconnect.
+Stores messages in Redis Streams for replay when clients reconnect with `Last-Event-ID`.
 
 ```rust
 use sse_gateway::Gateway;
@@ -74,13 +76,29 @@ let gateway = Gateway::builder()
 #### Configuration
 
 ```rust
-// Custom max messages per channel (default: 100)
+// Default: 100 messages per channel, 1 hour TTL
+let storage = RedisStorage::new();
+
+// Custom max messages per channel (default TTL: 1 hour)
 let storage = RedisStorage::with_max_messages(500);
+
+// Custom max messages and TTL
+let storage = RedisStorage::with_options(
+    500,   // max messages per channel
+    7200,  // TTL in seconds (2 hours)
+);
 ```
 
 #### Storage Keys
 
 Messages are stored in Redis Streams with keys: `sse:stream:{channel_id}`
+
+#### Batching
+
+RedisStorage uses internal batching to improve throughput:
+- Batch size: 100 messages
+- Flush interval: 10ms
+- Non-blocking writes (fire-and-forget)
 
 ## Usage Examples
 
@@ -99,26 +117,14 @@ async fn main() -> anyhow::Result<()> {
     storage.connect(redis_url).await?;
 
     // Build gateway
-    let gateway = Gateway::builder()
+    Gateway::builder()
+        .port(8080)
         .source(RedisPubSubSource::with_defaults(redis_url))
         .storage(storage)
-        .build()?;
-
-    gateway.run().await
+        .build()?
+        .run()
+        .await
 }
-```
-
-### Custom Patterns
-
-```rust
-// Subscribe to multiple patterns
-let source = RedisPubSubSource::new(
-    "redis://localhost:6379",
-    vec![
-        "sse:*".to_string(),        // All SSE channels
-        "notifications:*".to_string(), // Custom pattern
-    ]
-);
 ```
 
 ## Publishing Messages
@@ -126,14 +132,14 @@ let source = RedisPubSubSource::new(
 ### redis-cli
 
 ```bash
-# Send to specific channel
-redis-cli PUBLISH sse:user123 '{"event_type":"notification","data":{"text":"Hello!"}}'
+# Send to specific channel (channel name = SSE channel_id)
+redis-cli PUBLISH user123 '{"text": "Hello!"}'
 
-# Broadcast to all
-redis-cli PUBLISH sse:broadcast '{"event_type":"announcement","data":"Server maintenance in 5 minutes"}'
+# Send to another channel
+redis-cli PUBLISH notifications 'New notification'
 
 # Plain text message
-redis-cli PUBLISH sse:user123 "Simple text message"
+redis-cli PUBLISH user123 "Simple text message"
 ```
 
 ### Python
@@ -144,18 +150,13 @@ import json
 
 r = redis.Redis()
 
-# JSON message
-r.publish('sse:user123', json.dumps({
-    'event_type': 'notification',
-    'data': {'text': 'Hello!'},
-    'id': 'msg-001'
+# Send to channel "user123"
+r.publish('user123', json.dumps({
+    'text': 'Hello!'
 }))
 
-# Broadcast
-r.publish('sse:broadcast', json.dumps({
-    'event_type': 'announcement',
-    'data': 'Hello everyone!'
-}))
+# Send to channel "notifications"
+r.publish('notifications', 'New notification!')
 ```
 
 ### Node.js
@@ -164,17 +165,13 @@ r.publish('sse:broadcast', json.dumps({
 const Redis = require('ioredis');
 const redis = new Redis();
 
-// Send to channel
-await redis.publish('sse:user123', JSON.stringify({
-  event_type: 'notification',
-  data: { text: 'Hello!' }
+// Send to channel "user123"
+await redis.publish('user123', JSON.stringify({
+  text: 'Hello!'
 }));
 
-// Broadcast
-await redis.publish('sse:broadcast', JSON.stringify({
-  event_type: 'announcement',
-  data: 'Hello everyone!'
-}));
+// Send to channel "notifications"
+await redis.publish('notifications', 'New notification!');
 ```
 
 ## Message Replay
@@ -191,11 +188,24 @@ sse.onmessage = (e) => {
 };
 ```
 
-## Environment Variables
+## Architecture
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `REDIS_URL` | Redis connection URL | Required |
+```
+┌─────────────┐     ┌─────────────────────────────────────────────┐
+│   Client    │────▶│              SSE Gateway                    │
+│ (Browser)   │◀────│                                             │
+└─────────────┘     │  ┌─────────────────┐  ┌──────────────────┐  │
+                    │  │ RedisPubSubSource│  │   RedisStorage   │  │
+                    │  │  (subscribe *)   │  │  (Redis Streams) │  │
+                    │  └────────┬─────────┘  └────────┬─────────┘  │
+                    └───────────┼─────────────────────┼────────────┘
+                                │                     │
+                    ┌───────────▼─────────────────────▼───────────┐
+                    │                  Redis                       │
+                    │   Pub/Sub channels    │    Streams          │
+                    │   (real-time push)    │    (persistence)    │
+                    └─────────────────────────────────────────────┘
+```
 
 ## License
 
