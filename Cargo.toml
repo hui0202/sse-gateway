@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 sse-gateway = { path = "crates/sse-gateway" }
 sse-gateway-gcp = { path = "crates/sse-gateway-gcp" }
+sse-gateway-redis = { path = "crates/sse-gateway-redis" }
 tokio = { version = "1", features = ["full"] }
 anyhow = "1.0"
 tracing = "0.1"

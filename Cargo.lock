@@ -524,6 +524,7 @@ dependencies = [
  "serde_json",
  "sse-gateway",
  "sse-gateway-gcp",
+ "sse-gateway-redis",
  "tokio",
  "tracing",
  "tracing-subscriber",
