@@ -42,7 +42,7 @@ members = [
 version = "2.0.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/hui200102/sse-gateway"
+repository = "https://github.com/hui0202/sse-gateway"
 authors = ["a2191523412@gmail.com"]
 
 [workspace.dependencies]
