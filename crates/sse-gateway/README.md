@@ -30,6 +30,65 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
+## Authentication
+
+Add authentication by providing an auth callback. Return `None` to allow the connection, or `Some(Response)` to deny.
+
+```rust
+use axum::http::StatusCode;
+use sse_gateway::{Gateway, MemoryStorage, NoopSource};
+use sse_gateway::auth::{deny, AuthRequest};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    Gateway::builder()
+        .port(8080)
+        .source(NoopSource)
+        .storage(MemoryStorage::default())
+        .auth(|req: AuthRequest| async move {
+            match req.bearer_token() {
+                Some("secret-token") => None,  // Allow
+                Some(_) => Some(deny(StatusCode::UNAUTHORIZED, "Invalid token")),
+                None => Some(deny(StatusCode::UNAUTHORIZED, "Token required")),
+            }
+        })
+        .build()?
+        .run()
+        .await
+}
+```
+
+### AuthRequest
+
+The auth callback receives an `AuthRequest` with full request access:
+
+**Fields:**
+- `method`: HTTP method (`GET` for SSE)
+- `uri`: Full request URI (path + query string)
+- `headers`: All HTTP headers
+- `channel_id`: The channel being requested
+- `client_ip`: Client IP (from `X-Forwarded-For` or direct connection)
+
+**Helper methods:**
+- `req.bearer_token()` - Extract Bearer token from Authorization header
+- `req.header("name")` - Get any header value
+- `req.path()` - Get request path
+- `req.query_string()` - Get raw query string
+- `req.query_param("name")` - Get a query parameter value
+
+### Response Helpers
+
+```rust
+use sse_gateway::auth::{deny, deny_json};
+use axum::http::StatusCode;
+
+// Plain text error
+deny(StatusCode::FORBIDDEN, "Access denied")
+
+// JSON error
+deny_json(StatusCode::UNAUTHORIZED, serde_json::json!({"error": "Invalid token"}))
+```
+
 ## Implementing Custom Sources
 
 ```rust

@@ -1,8 +1,8 @@
 //! HTTP handlers for the SSE gateway
 
 use axum::{
-    extract::{Query, State},
-    http::{header, StatusCode},
+    extract::{OriginalUri, Query, State},
+    http::{header, Method, StatusCode},
     response::{sse::Event, Html, IntoResponse, Json, Sse},
 };
 use futures::stream::Stream;
@@ -56,6 +56,8 @@ fn sse_event_to_axum(sse_event: SseEvent) -> Event {
 /// SSE connection endpoint
 pub async fn sse_connect<S: MessageStorage>(
     State(state): State<GatewayState<S>>,
+    method: Method,
+    OriginalUri(uri): OriginalUri,
     Query(params): Query<SseConnectParams>,
     headers: axum::http::HeaderMap,
 ) -> axum::response::Response {
@@ -77,6 +79,8 @@ pub async fn sse_connect<S: MessageStorage>(
     // Perform authentication if configured
     if let Some(auth_fn) = &state.auth {
         let auth_request = AuthRequest {
+            method: method.clone(),
+            uri: uri.clone(),
             headers: headers.clone(),
             channel_id: params.channel_id.clone(),
             client_ip: client_ip.clone(),

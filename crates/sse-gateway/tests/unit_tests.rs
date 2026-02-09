@@ -6,7 +6,7 @@ use sse_gateway::{
     storage::{MemoryStorage, MessageStorage, NoopStorage},
     ConnectionManager, EventData, MessageSource, SseEvent,
 };
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, Method, StatusCode, Uri};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio_util::sync::CancellationToken;
@@ -363,6 +363,8 @@ fn test_auth_request_bearer_token() {
     headers.insert("authorization", "Bearer my-secret-token".parse().unwrap());
     
     let req = AuthRequest {
+        method: Method::GET,
+        uri: "/sse/connect?channel_id=test".parse::<Uri>().unwrap(),
         headers,
         channel_id: "test".to_string(),
         client_ip: None,
@@ -377,6 +379,8 @@ fn test_auth_request_header() {
     headers.insert("x-custom", "value123".parse().unwrap());
     
     let req = AuthRequest {
+        method: Method::GET,
+        uri: "/sse/connect?channel_id=test&foo=bar".parse::<Uri>().unwrap(),
         headers,
         channel_id: "test".to_string(),
         client_ip: Some("1.2.3.4".to_string()),
@@ -384,6 +388,9 @@ fn test_auth_request_header() {
     
     assert_eq!(req.header("x-custom"), Some("value123"));
     assert_eq!(req.header("non-existent"), None);
+    assert_eq!(req.path(), "/sse/connect");
+    assert_eq!(req.query_param("foo"), Some("bar"));
+    assert_eq!(req.query_param("channel_id"), Some("test"));
 }
 
 #[test]

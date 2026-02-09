@@ -2,7 +2,7 @@
 //!
 //! Provides a simple callback-based authentication.
 
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use std::future::Future;
 use std::pin::Pin;
@@ -11,6 +11,10 @@ use std::sync::Arc;
 /// Request context passed to the auth callback
 #[derive(Debug, Clone)]
 pub struct AuthRequest {
+    /// HTTP method (usually GET for SSE)
+    pub method: Method,
+    /// Full request URI (path + query string)
+    pub uri: Uri,
     /// HTTP headers from the request
     pub headers: HeaderMap,
     /// The channel ID being requested
@@ -29,6 +33,31 @@ impl AuthRequest {
     pub fn bearer_token(&self) -> Option<&str> {
         self.header("authorization")
             .and_then(|auth| auth.strip_prefix("Bearer "))
+    }
+
+    /// Get the request path
+    pub fn path(&self) -> &str {
+        self.uri.path()
+    }
+
+    /// Get the raw query string (without leading '?')
+    pub fn query_string(&self) -> Option<&str> {
+        self.uri.query()
+    }
+
+    /// Get a query parameter value by name
+    ///
+    /// Note: This is a simple implementation that doesn't handle URL decoding.
+    /// For complex cases, parse `query_string()` with a proper URL parser.
+    pub fn query_param(&self, name: &str) -> Option<&str> {
+        self.uri.query().and_then(|query| {
+            query.split('&').find_map(|pair| {
+                let mut parts = pair.splitn(2, '=');
+                let key = parts.next()?;
+                let value = parts.next()?;
+                if key == name { Some(value) } else { None }
+            })
+        })
     }
 }
 
