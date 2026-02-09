@@ -56,8 +56,6 @@ gce_create_template() {
         print_warning "REDIS_URL: not configured"
     fi
     
-    STARTUP_SCRIPT=$(cat "$SCRIPT_DIR/scripts/gce-startup.sh")
-    
     gcloud compute instance-templates create-with-container $INSTANCE_TEMPLATE \
         --machine-type=$GCE_MACHINE_TYPE \
         --container-image=$IMAGE_NAME \
@@ -66,7 +64,7 @@ gce_create_template() {
         --network=default \
         --service-account=$SERVICE_ACCOUNT \
         --scopes=cloud-platform \
-        --metadata=startup-script="$STARTUP_SCRIPT" \
+        --metadata-from-file=startup-script="$SCRIPT_DIR/scripts/gce-startup.sh" \
         --boot-disk-size=20GB \
         --boot-disk-type=pd-standard \
         --quiet
