@@ -28,14 +28,15 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/gateway /app/gateway
-
-COPY config.yaml* ./
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 ENV RUST_LOG=info
 
-EXPOSE 8080
+EXPOSE 8080 9000
 
-CMD ["./gateway"]
+ENTRYPOINT ["/app/entrypoint.sh"]
