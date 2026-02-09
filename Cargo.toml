@@ -11,10 +11,12 @@ path = "src/main.rs"
 [dependencies]
 sse-gateway = { path = "crates/sse-gateway" }
 sse-gateway-redis = { path = "crates/sse-gateway-redis" }
+sse-gateway-gcp = { path = "crates/sse-gateway-gcp" }
 tokio = { version = "1", features = ["full"] }
 anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rustls = { workspace = true }
 
 [dev-dependencies]
 async-trait = "0.1"
@@ -39,6 +41,8 @@ repository = "https://github.com/hui200102/sse-gateway"
 authors = ["a2191523412@gmail.com"]
 
 [workspace.dependencies]
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+
 # Core
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }

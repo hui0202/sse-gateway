@@ -16,6 +16,7 @@ debug/
 .env.*
 .envrc
 !.env.example
+!.env.local.example
 
 # Local configuration
 config.local.yaml

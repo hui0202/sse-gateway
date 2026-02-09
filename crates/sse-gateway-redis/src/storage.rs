@@ -66,6 +66,16 @@ impl RedisStorage {
         format!("sse:stream:{}", channel_id)
     }
 
+    /// Check if the ID is a valid Redis Stream ID format (timestamp-sequence)
+    fn is_valid_stream_id(id: &str) -> bool {
+        let parts: Vec<&str> = id.split('-').collect();
+        if parts.len() != 2 {
+            return false;
+        }
+        // Both parts should be numeric
+        parts[0].parse::<u64>().is_ok() && parts[1].parse::<u64>().is_ok()
+    }
+
     fn parse_stream_entries(entries: Vec<StreamId>) -> Vec<SseEvent> {
         entries
             .into_iter()
@@ -150,6 +160,16 @@ impl MessageStorage for RedisStorage {
             Some(id) => id,
             None => return vec![],
         };
+
+        // Validate Redis Stream ID format: "timestamp-sequence" (e.g., "1234567890123-0")
+        // If the ID is not in this format (e.g., UUID), we can't use it for XRANGE
+        if !Self::is_valid_stream_id(after_id) {
+            warn!(
+                id = %after_id,
+                "Invalid Redis Stream ID format, skipping replay"
+            );
+            return vec![];
+        }
 
         let conn = self.redis.read().await;
         let Some(ref manager) = *conn else {
