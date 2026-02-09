@@ -16,7 +16,7 @@
 
 use async_trait::async_trait;
 use google_cloud_pubsub::client::{Client, ClientConfig};
-use sse_gateway::{IncomingMessage, MessageHandler, MessageSource};
+use sse_gateway::{ConnectionManager, IncomingMessage, MessageHandler, MessageSource};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
@@ -45,7 +45,12 @@ impl GcpPubSubSource {
 
 #[async_trait]
 impl MessageSource for GcpPubSubSource {
-    async fn start(&self, handler: MessageHandler, cancel: CancellationToken) -> anyhow::Result<()> {
+    async fn start(
+        &self,
+        handler: MessageHandler,
+        _connection_manager: ConnectionManager,
+        cancel: CancellationToken,
+    ) -> anyhow::Result<()> {
         info!(
             project = %self.project_id,
             subscription = %self.subscription_id,

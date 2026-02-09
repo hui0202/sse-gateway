@@ -99,7 +99,13 @@ struct MySource;
 
 #[async_trait]
 impl MessageSource for MySource {
-    async fn start(&self, handler: MessageHandler, cancel: CancellationToken) -> anyhow::Result<()> {
+    async fn start(
+        &self,
+        handler: MessageHandler,
+        connection_manager: ConnectionManager,
+        cancel: CancellationToken,
+    ) -> anyhow::Result<()> {
+        // Use connection_manager to check local connections
         // Your implementation
         Ok(())
     }

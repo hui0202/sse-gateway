@@ -8,8 +8,10 @@
 use async_trait::async_trait;
 use sse_gateway::{
     CancellationToken, Gateway, IncomingMessage, MemoryStorage, MessageHandler, MessageSource,
+    ConnectionManager,
 };
 use std::time::Duration;
+
 
 /// A custom source that generates periodic messages
 struct TimerSource {
@@ -28,7 +30,7 @@ impl TimerSource {
 
 #[async_trait]
 impl MessageSource for TimerSource {
-    async fn start(&self, handler: MessageHandler, cancel: CancellationToken) -> anyhow::Result<()> {
+    async fn start(&self, handler: MessageHandler, _connection_manager: ConnectionManager, cancel: CancellationToken) -> anyhow::Result<()> {
         tracing::info!("TimerSource started");
 
         let mut interval = tokio::time::interval(self.interval);
@@ -37,7 +39,7 @@ impl MessageSource for TimerSource {
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => break,
-                _ = interval.tick() => {
+                _ = interval.tick() => {    
                     count += 1;
                     let msg = IncomingMessage::new(
                         "tick",

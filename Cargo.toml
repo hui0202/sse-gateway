@@ -1,6 +1,6 @@
 [package]
 name = "gateway"
-version = "0.1.2"
+version = "2.0.0"
 edition = "2021"
 description = "SSE Gateway with GCP Pub/Sub"
 
@@ -17,13 +17,16 @@ anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rustls = { workspace = true }
-
-[dev-dependencies]
 async-trait = "0.1"
+axum = "0.8"
+redis = { workspace = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+[dev-dependencies]
 chrono = "0.4"
-axum = "0.8"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+futures = "0.3"
 
 [workspace]
 resolver = "2"

@@ -111,8 +111,9 @@ async fn test_memory_storage_store_and_retrieve() {
     let event = SseEvent::message("test");
 
     // Store event
-    let stream_id = storage.store("channel-1", &event).await;
-    assert!(stream_id.is_some());
+    let stream_id = storage.generate_id();
+    assert!(!stream_id.is_empty());
+    storage.store("channel-1", &stream_id, &event).await;
 
     // Retrieve with non-existent after_id returns empty
     let messages = storage.get_messages_after("channel-1", Some("non-existent")).await;
@@ -128,9 +129,12 @@ async fn test_memory_storage_replay() {
     let storage = MemoryStorage::new(10);
 
     // Store multiple events
-    let id1 = storage.store("ch1", &SseEvent::message("msg1")).await.unwrap();
-    let _id2 = storage.store("ch1", &SseEvent::message("msg2")).await.unwrap();
-    let _id3 = storage.store("ch1", &SseEvent::message("msg3")).await.unwrap();
+    let id1 = storage.generate_id();
+    storage.store("ch1", &id1, &SseEvent::message("msg1")).await;
+    let id2 = storage.generate_id();
+    storage.store("ch1", &id2, &SseEvent::message("msg2")).await;
+    let id3 = storage.generate_id();
+    storage.store("ch1", &id3, &SseEvent::message("msg3")).await;
 
     // Get messages after id1
     let messages = storage.get_messages_after("ch1", Some(&id1)).await;
@@ -143,11 +147,13 @@ async fn test_memory_storage_max_capacity() {
 
     // Store more than max
     for i in 0..5 {
-        storage.store("ch1", &SseEvent::message(format!("msg{}", i))).await;
+        let id = storage.generate_id();
+        storage.store("ch1", &id, &SseEvent::message(format!("msg{}", i))).await;
     }
 
     // Store one more to check capacity
-    let _last_id = storage.store("ch1", &SseEvent::message("last")).await.unwrap();
+    let last_id = storage.generate_id();
+    storage.store("ch1", &last_id, &SseEvent::message("last")).await;
     
     // Should only have last 3 messages
     // Check by getting messages after a non-existent early ID
@@ -159,12 +165,15 @@ async fn test_memory_storage_max_capacity() {
 async fn test_memory_storage_different_channels() {
     let storage = MemoryStorage::new(10);
 
-    storage.store("ch1", &SseEvent::message("msg1")).await;
-    let id = storage.store("ch2", &SseEvent::message("msg2")).await.unwrap();
-    storage.store("ch2", &SseEvent::message("msg3")).await;
+    let id1 = storage.generate_id();
+    storage.store("ch1", &id1, &SseEvent::message("msg1")).await;
+    let id2 = storage.generate_id();
+    storage.store("ch2", &id2, &SseEvent::message("msg2")).await;
+    let id3 = storage.generate_id();
+    storage.store("ch2", &id3, &SseEvent::message("msg3")).await;
 
     // Get messages from ch2 only
-    let messages = storage.get_messages_after("ch2", Some(&id)).await;
+    let messages = storage.get_messages_after("ch2", Some(&id2)).await;
     assert_eq!(messages.len(), 1);
 }
 
@@ -178,7 +187,10 @@ async fn test_memory_storage_is_available() {
 async fn test_noop_storage() {
     let storage = NoopStorage;
     
-    assert!(storage.store("ch1", &SseEvent::message("test")).await.is_none());
+    // NoopStorage just discards, returns empty id
+    let id = storage.generate_id();
+    assert!(id.is_empty());
+    storage.store("ch1", &id, &SseEvent::message("test")).await;
     assert!(storage.get_messages_after("ch1", Some("id")).await.is_empty());
     assert!(!storage.is_available().await);
     assert_eq!(storage.name(), "Noop (disabled)");
@@ -305,6 +317,7 @@ async fn test_connection_manager_heartbeat() {
 async fn test_channel_source_send_receive() {
     let (source, sender) = ChannelSource::new();
     let cancel = CancellationToken::new();
+    let connection_manager = ConnectionManager::new("test-instance");
     
     let received = Arc::new(AtomicUsize::new(0));
     let received_clone = received.clone();
@@ -315,7 +328,7 @@ async fn test_channel_source_send_receive() {
     
     let cancel_clone = cancel.clone();
     let source_handle: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
-        source.start(handler, cancel_clone).await
+        source.start(handler, connection_manager, cancel_clone).await
     });
     
     // Send messages
@@ -336,11 +349,12 @@ async fn test_channel_source_send_receive() {
 async fn test_channel_source_stops_when_sender_dropped() {
     let (source, sender) = ChannelSource::new();
     let cancel = CancellationToken::new();
+    let connection_manager = ConnectionManager::new("test-instance");
     
     let handler: sse_gateway::MessageHandler = Arc::new(|_| {});
     
     let handle = tokio::spawn(async move {
-        source.start(handler, cancel).await
+        source.start(handler, connection_manager, cancel).await
     });
     
     // Drop sender should cause source to stop

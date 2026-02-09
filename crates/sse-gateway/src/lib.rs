@@ -54,7 +54,7 @@
 //! ## Custom Message Source
 //!
 //! ```rust,ignore
-//! use sse_gateway::{MessageSource, MessageHandler, IncomingMessage};
+//! use sse_gateway::{MessageSource, MessageHandler, IncomingMessage, ConnectionManager};
 //! use async_trait::async_trait;
 //! use tokio_util::sync::CancellationToken;
 //!
@@ -62,7 +62,13 @@
 //!
 //! #[async_trait]
 //! impl MessageSource for MySource {
-//!     async fn start(&self, handler: MessageHandler, cancel: CancellationToken) -> anyhow::Result<()> {
+//!     async fn start(
+//!         &self,
+//!         handler: MessageHandler,
+//!         connection_manager: ConnectionManager,
+//!         cancel: CancellationToken,
+//!     ) -> anyhow::Result<()> {
+//!         // Use connection_manager to check local connections
 //!         // Your message receiving logic here
 //!         loop {
 //!             tokio::select! {
@@ -95,7 +101,7 @@ pub use connection::{SseConnection, ConnectionMetadata};
 pub use error::{Error, Result};
 pub use event::{SseEvent, EventData};
 pub use manager::ConnectionManager;
-pub use source::{MessageSource, MessageHandler, IncomingMessage, NoopSource, ChannelSource};
+pub use source::{MessageSource, MessageHandler, IncomingMessage, NoopSource, ChannelSource, ConnectionInfo};
 pub use storage::{MessageStorage, MemoryStorage, NoopStorage};
 
 #[cfg(feature = "server")]

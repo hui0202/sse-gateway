@@ -14,9 +14,12 @@ use tower_http::{
 // Error types now use anyhow for better ergonomics
 use crate::{auth::AuthFn, handler};
 use crate::manager::ConnectionManager;
-use crate::source::{IncomingMessage, MessageSource, NoopSource};
+use crate::source::{ConnectionInfo, IncomingMessage, MessageSource, NoopSource};
 use crate::storage::{MemoryStorage, MessageStorage, NoopStorage};
 use crate::event::SseEvent;
+
+/// Connection lifecycle callback type
+pub type LifecycleCallback = Arc<dyn Fn(&ConnectionInfo) + Send + Sync>;
 
 /// Gateway configuration and runner
 pub struct Gateway<Source: MessageSource, Storage: MessageStorage> {
@@ -42,22 +45,38 @@ impl<Source: MessageSource, Storage: MessageStorage> Gateway<Source, Storage> {
             "Starting SSE Gateway"
         );
 
+        // Wrap source in Arc for sharing
+        let source = Arc::new(self.source);
+
+        // Create lifecycle callbacks that delegate to source
+        let source_for_connect = source.clone();
+        let on_connect: LifecycleCallback = Arc::new(move |info| {
+            source_for_connect.on_connect(info);
+        });
+
+        let source_for_disconnect = source.clone();
+        let on_disconnect: LifecycleCallback = Arc::new(move |info| {
+            source_for_disconnect.on_disconnect(info);
+        });
+
         // Create shared state
         let state = handler::GatewayState {
             connection_manager: self.connection_manager.clone(),
             storage: self.storage.clone(),
             auth: self.auth.clone(),
+            on_connect: Some(on_connect),
+            on_disconnect: Some(on_disconnect),
         };
 
         // Start message source
         let dispatcher = Dispatcher::new(self.connection_manager.clone(), self.storage.clone());
         let handler = dispatcher.to_handler();
-        let source = Arc::new(self.source);
         let source_cancel = cancel.clone();
         let source_name = source.name();
+        let source_connection_manager = self.connection_manager.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = source.start(handler, source_cancel).await {
+            if let Err(e) = source.start(handler, source_connection_manager, source_cancel).await {
                 tracing::error!(error = %e, source = source_name, "Message source error");
             }
         });
@@ -335,17 +354,30 @@ impl<S: MessageStorage> Dispatcher<S> {
     }
 
     async fn handle(&self, msg: IncomingMessage) {
-        let mut event = SseEvent::raw(&msg.event_type, msg.data);
+        let mut event = SseEvent::raw(&msg.event_type, msg.data.clone());
         if let Some(id) = msg.id {
             event.id = Some(id);
         }
 
         let sent = match &msg.channel_id {
             Some(channel_id) => {
-                if let Some(stream_id) = self.storage.store(channel_id, &event).await {
-                    event.stream_id = Some(stream_id);
+                // Generate ID first
+                let stream_id = self.storage.generate_id();
+                if !stream_id.is_empty() {
+                    event.stream_id = Some(stream_id.clone());
                 }
-                self.connection_manager.send_to_channel(channel_id, event).await
+
+                // Send to clients immediately
+                let sent = self.connection_manager.send_to_channel(channel_id, event.clone()).await;
+
+                // Store in background (fire-and-forget, don't block sending)
+                let storage = self.storage.clone();
+                let channel_id = channel_id.clone();
+                tokio::spawn(async move {
+                    storage.store(&channel_id, &stream_id, &event).await;
+                });
+
+                sent
             }
             None => self.connection_manager.broadcast(event).await,
         };

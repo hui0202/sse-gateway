@@ -12,7 +12,8 @@
 use async_trait::async_trait;
 use axum::{extract::State, routing::post, Json, Router};
 use sse_gateway::{
-    CancellationToken, Gateway, IncomingMessage, MemoryStorage, MessageHandler, MessageSource,
+    CancellationToken, ConnectionManager, Gateway, IncomingMessage, MemoryStorage, MessageHandler,
+    MessageSource,
 };
 use tokio::sync::mpsc;
 
@@ -40,7 +41,12 @@ impl WebhookSource {
 
 #[async_trait]
 impl MessageSource for WebhookSource {
-    async fn start(&self, handler: MessageHandler, cancel: CancellationToken) -> anyhow::Result<()> {
+    async fn start(
+        &self,
+        handler: MessageHandler,
+        _connection_manager: ConnectionManager,
+        cancel: CancellationToken,
+    ) -> anyhow::Result<()> {
         let mut receiver = self
             .receiver
             .lock()

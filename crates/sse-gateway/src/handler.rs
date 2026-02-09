@@ -18,7 +18,9 @@ use tokio_stream::StreamExt;
 
 use crate::auth::{AuthFn, AuthRequest};
 use crate::event::SseEvent;
+use crate::gateway::LifecycleCallback;
 use crate::manager::ConnectionManager;
+use crate::source::ConnectionInfo;
 use crate::storage::MessageStorage;
 
 /// Shared state for handlers
@@ -27,6 +29,8 @@ pub struct GatewayState<S: MessageStorage> {
     pub connection_manager: ConnectionManager,
     pub storage: S,
     pub auth: Option<AuthFn>,
+    pub on_connect: Option<LifecycleCallback>,
+    pub on_disconnect: Option<LifecycleCallback>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -111,7 +115,18 @@ pub async fn sse_connect<S: MessageStorage>(
     );
 
     let connection_id = connection.id.clone();
+    let instance_id = state.connection_manager.instance_id().to_string();
     let connection_manager = state.connection_manager.clone();
+
+    // Call on_connect callback
+    let conn_info = ConnectionInfo {
+        channel_id: params.channel_id.clone(),
+        connection_id: connection_id.clone(),
+        instance_id: instance_id.clone(),
+    };
+    if let Some(ref on_connect) = state.on_connect {
+        on_connect(&conn_info);
+    }
 
     // Replay missed messages
     let replay_messages = state
@@ -153,12 +168,24 @@ pub async fn sse_connect<S: MessageStorage>(
 
     let cleanup_id = connection_id.clone();
     let cleanup_channel = params.channel_id.clone();
+    let cleanup_instance = instance_id.clone();
+    let on_disconnect = state.on_disconnect.clone();
     let final_stream = CleanupStream {
         inner: Box::pin(merged_stream),
         connection_id: connection_id.clone(),
         cleanup: Some(Box::new(move || {
             tracing::info!(connection_id = %cleanup_id, channel_id = %cleanup_channel, "Connection closed");
             connection_manager.unregister(&cleanup_id);
+            
+            // Call on_disconnect callback
+            if let Some(ref callback) = on_disconnect {
+                let info = ConnectionInfo {
+                    channel_id: cleanup_channel.clone(),
+                    connection_id: cleanup_id.clone(),
+                    instance_id: cleanup_instance,
+                };
+                callback(&info);
+            }
         })),
     };
 
@@ -198,11 +225,11 @@ impl<S: Stream + Unpin> Stream for CleanupStream<S> {
 #[derive(Serialize)]
 pub struct StatsResponse {
     pub total_connections: usize,
-    pub connections: Vec<ConnectionInfo>,
+    pub connections: Vec<ConnectionStats>,
 }
 
 #[derive(Serialize)]
-pub struct ConnectionInfo {
+pub struct ConnectionStats {
     pub id: String,
     pub channel_id: String,
     pub connected_at: String,
@@ -212,11 +239,11 @@ pub struct ConnectionInfo {
 pub async fn get_stats<S: MessageStorage>(
     State(state): State<GatewayState<S>>,
 ) -> Json<StatsResponse> {
-    let connections: Vec<ConnectionInfo> = state
+    let connections: Vec<ConnectionStats> = state
         .connection_manager
         .list_connections()
         .into_iter()
-        .map(|c| ConnectionInfo {
+        .map(|c| ConnectionStats {
             id: c.id.clone(),
             channel_id: c.channel_id.clone(),
             connected_at: c.metadata.connected_at.to_rfc3339(),
@@ -248,12 +275,27 @@ pub async fn send_message<S: MessageStorage>(
     State(state): State<GatewayState<S>>,
     Json(req): Json<SendMessageRequest>,
 ) -> impl IntoResponse {
-    let event = SseEvent::new(&req.event_type, req.data);
+    let mut event = SseEvent::new(&req.event_type, req.data);
 
     let sent_count = match &req.channel_id {
         Some(channel_id) if !channel_id.is_empty() => {
-            state.storage.store(channel_id, &event).await;
-            state.connection_manager.send_to_channel(channel_id, event).await
+            // Generate ID first
+            let stream_id = state.storage.generate_id();
+            if !stream_id.is_empty() {
+                event.stream_id = Some(stream_id.clone());
+            }
+
+            // Send to clients immediately
+            let sent = state.connection_manager.send_to_channel(channel_id, event.clone()).await;
+
+            // Store in background (fire-and-forget)
+            let storage = state.storage.clone();
+            let channel_id = channel_id.clone();
+            tokio::spawn(async move {
+                storage.store(&channel_id, &stream_id, &event).await;
+            });
+
+            sent
         }
         _ => state.connection_manager.broadcast(event).await,
     };

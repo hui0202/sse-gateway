@@ -25,9 +25,12 @@ use crate::event::SseEvent;
 ///
 /// #[async_trait]
 /// impl MessageStorage for MyStorage {
-///     async fn store(&self, channel_id: &str, event: &SseEvent) -> Option<String> {
-///         let id = self.db.insert(channel_id, event).await?;
-///         Some(id)
+///     fn generate_id(&self) -> String {
+///         uuid::Uuid::new_v4().to_string()
+///     }
+///
+///     async fn store(&self, channel_id: &str, stream_id: &str, event: &SseEvent) {
+///         self.db.insert(channel_id, stream_id, event).await;
 ///     }
 ///
 ///     async fn get_messages_after(&self, channel_id: &str, after_id: Option<&str>) -> Vec<SseEvent> {
@@ -40,10 +43,15 @@ use crate::event::SseEvent;
 /// ```
 #[async_trait]
 pub trait MessageStorage: Send + Sync + Clone + 'static {
-    /// Store a message and return the stream ID
+    /// Generate a unique stream ID
     ///
-    /// Return `None` if storage is disabled or fails.
-    async fn store(&self, channel_id: &str, event: &SseEvent) -> Option<String>;
+    /// Called before sending to client, so storage can happen in parallel.
+    fn generate_id(&self) -> String;
+
+    /// Store a message with the given stream ID
+    ///
+    /// This is called asynchronously after the message is sent to clients.
+    async fn store(&self, channel_id: &str, stream_id: &str, event: &SseEvent);
 
     /// Get messages after a specific ID (for replay)
     ///
@@ -76,12 +84,6 @@ impl MemoryStorage {
             max_per_channel,
         }
     }
-
-    fn generate_stream_id(&self) -> String {
-        let ts = chrono::Utc::now().timestamp_millis();
-        let seq = self.counter.fetch_add(1, Ordering::SeqCst);
-        format!("{}-{}", ts, seq)
-    }
 }
 
 impl Default for MemoryStorage {
@@ -92,17 +94,22 @@ impl Default for MemoryStorage {
 
 #[async_trait]
 impl MessageStorage for MemoryStorage {
-    async fn store(&self, channel_id: &str, event: &SseEvent) -> Option<String> {
-        let stream_id = self.generate_stream_id();
+    fn generate_id(&self) -> String {
+        let ts = chrono::Utc::now().timestamp_millis();
+        let seq = self.counter.fetch_add(1, Ordering::SeqCst);
+        format!("{}-{}", ts, seq)
+    }
+
+    async fn store(&self, channel_id: &str, stream_id: &str, event: &SseEvent) {
         let max = self.max_per_channel;
 
         let mut stored_event = event.clone();
-        stored_event.stream_id = Some(stream_id.clone());
+        stored_event.stream_id = Some(stream_id.to_string());
 
         self.streams
             .entry(channel_id.to_string())
             .or_default()
-            .push((stream_id.clone(), stored_event));
+            .push((stream_id.to_string(), stored_event));
 
         // Trim old messages
         self.streams.alter(channel_id, |_, mut v| {
@@ -111,8 +118,6 @@ impl MessageStorage for MemoryStorage {
             }
             v
         });
-
-        Some(stream_id)
     }
 
     async fn get_messages_after(&self, channel_id: &str, after_id: Option<&str>) -> Vec<SseEvent> {
@@ -155,8 +160,12 @@ pub struct NoopStorage;
 
 #[async_trait]
 impl MessageStorage for NoopStorage {
-    async fn store(&self, _channel_id: &str, _event: &SseEvent) -> Option<String> {
-        None
+    fn generate_id(&self) -> String {
+        String::new()
+    }
+
+    async fn store(&self, _channel_id: &str, _stream_id: &str, _event: &SseEvent) {
+        // No-op
     }
 
     async fn get_messages_after(&self, _channel_id: &str, _after_id: Option<&str>) -> Vec<SseEvent> {

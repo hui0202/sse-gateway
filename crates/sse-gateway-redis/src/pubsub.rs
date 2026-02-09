@@ -1,7 +1,7 @@
 //! Redis Pub/Sub message source
 
 use async_trait::async_trait;
-use sse_gateway::{IncomingMessage, MessageHandler, MessageSource};
+use sse_gateway::{ConnectionManager, IncomingMessage, MessageHandler, MessageSource};
 use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn, debug};
@@ -28,7 +28,12 @@ impl RedisPubSubSource {
 
 #[async_trait]
 impl MessageSource for RedisPubSubSource {
-    async fn start(&self, handler: MessageHandler, cancel: CancellationToken) -> anyhow::Result<()> {
+    async fn start(
+        &self,
+        handler: MessageHandler,
+        _connection_manager: ConnectionManager,
+        cancel: CancellationToken,
+    ) -> anyhow::Result<()> {
         info!(url = %self.redis_url, patterns = ?self.patterns, "Starting Redis Pub/Sub");
 
         let client = redis::Client::open(self.redis_url.as_str())?;
