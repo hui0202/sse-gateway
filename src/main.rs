@@ -1,5 +1,5 @@
-use sse_gateway::{Gateway, MemoryStorage};
-use sse_gateway_redis::RedisPubSubSource;
+use sse_gateway::Gateway;
+use sse_gateway_redis::{RedisPubSubSource, RedisStorage};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -31,7 +31,8 @@ async fn run_with_redis(port: u16) -> anyhow::Result<()> {
     let redis_url = std::env::var("REDIS_URL")
         .unwrap_or_else(|_| "redis://localhost:6379".to_string());
 
-    let storage = MemoryStorage::default();
+    let storage = RedisStorage::new();
+    storage.connect(&redis_url).await?;
 
     tracing::info!(
         port,
