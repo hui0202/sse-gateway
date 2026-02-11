@@ -1,7 +1,7 @@
 #!/bin/bash
 # GCE MIG deployment functions
 
-GCE_MACHINE_TYPE=${MACHINE_TYPE:-"e2-micro"}
+GCE_MACHINE_TYPE=${MACHINE_TYPE:-"f1-micro"}
 GCE_INIT_SIZE=${INIT_SIZE:-0}
 
 # Resource names
@@ -161,7 +161,7 @@ gce_deploy() {
     print_step "1" "Checking environment"
     check_requirements
     print_success "Zone: $ZONE"
-    print_info "Machine: $GCE_MACHINE_TYPE (~\$7/month)"
+    print_info "Machine: $GCE_MACHINE_TYPE (~\$5/month)"
     
     enable_apis "gce"
     setup_pubsub
