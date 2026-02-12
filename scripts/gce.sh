@@ -27,7 +27,7 @@ gce_setup_firewall() {
             gcloud compute firewall-rules create $name \
                 --network=default --action=allow --direction=ingress \
                 --source-ranges=$ranges --target-tags=$SERVICE_NAME \
-                --rules=tcp:8080 --quiet
+                --rules=tcp:8080,tcp:9000 --quiet
             print_success "$name (created)"
         fi
     done
