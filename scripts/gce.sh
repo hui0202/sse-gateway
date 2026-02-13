@@ -1,8 +1,13 @@
 #!/bin/bash
 # GCE MIG deployment functions
 
-GCE_MACHINE_TYPE=${MACHINE_TYPE:-"f1-micro"}
-GCE_INIT_SIZE=${INIT_SIZE:-0}
+GCE_MACHINE_TYPE=${MACHINE_TYPE:-"e2-medium"}
+GCE_INIT_SIZE=${INIT_SIZE:-1}  # 默认启动 1 个实例
+
+# 自动扩容配置
+GCE_MIN_INSTANCES=${MIN_INSTANCES:-1}
+GCE_MAX_INSTANCES=${MAX_INSTANCES:-5}
+GCE_TARGET_CPU=${TARGET_CPU:-0.6}  # CPU 使用率达到 60% 时扩容
 
 # Resource names
 INSTANCE_TEMPLATE="${SERVICE_NAME}-template"
@@ -44,16 +49,16 @@ gce_create_template() {
     PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
     SERVICE_ACCOUNT="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
     
-    CONTAINER_ENV="RUST_LOG=info,NO_COLOR=1,GCP_PROJECT=$PROJECT_ID,PUBSUB_SUBSCRIPTION=$SUBSCRIPTION_NAME"
+    # 基础环境变量
+    CONTAINER_ENV="RUST_LOG=info,NO_COLOR=1,GCP_PROJECT=$PROJECT_ID"
+    print_info "GCP_PROJECT: $PROJECT_ID"
     
-    if secret_exists "REDIS_URL"; then
-        CONTAINER_ENV="$CONTAINER_ENV,REDIS_URL=$(get_secret_value REDIS_URL)"
-        print_info "REDIS_URL: from Secret Manager"
-    elif [ -n "$REDIS_URL" ]; then
-        CONTAINER_ENV="$CONTAINER_ENV,REDIS_URL=$REDIS_URL"
-        print_info "REDIS_URL: from environment"
+    SECRETS_ENV=$(generate_gce_secrets_env)
+    
+    if [ -n "$SECRETS_ENV" ]; then
+        CONTAINER_ENV="$CONTAINER_ENV,$SECRETS_ENV"
     else
-        print_warning "REDIS_URL: not configured"
+        print_warning "No secrets found for ${SERVICE_NAME}"
     fi
     
     gcloud compute instance-templates create-with-container $INSTANCE_TEMPLATE \
@@ -91,13 +96,25 @@ gce_create_mig() {
     print_step "8" "Creating Managed Instance Group"
     
     if gcloud compute instance-groups managed describe $INSTANCE_GROUP --zone=$ZONE &>/dev/null; then
-        print_warning "MIG exists, updating..."
+        # 显示当前运行的实例数
+        local current_size=$(gcloud compute instance-groups managed describe $INSTANCE_GROUP \
+            --zone=$ZONE --format='value(targetSize)' 2>/dev/null)
+        
+        print_warning "MIG already exists with $current_size instance(s) running"
+        echo -e "  ${YELLOW}This will trigger a rolling update on production!${NC}"
+        read -p "  Continue with rolling update? (y/N): " confirm
+        
+        if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+            print_info "Skipped MIG update. Use './deploy.sh gce update' to update later."
+            return 0
+        fi
+        
         gcloud compute instance-groups managed set-instance-template $INSTANCE_GROUP \
             --template=$INSTANCE_TEMPLATE --zone=$ZONE --quiet
         gcloud compute instance-groups managed rolling-action start-update $INSTANCE_GROUP \
             --version=template=$INSTANCE_TEMPLATE --zone=$ZONE \
             --max-surge=1 --max-unavailable=0 --quiet
-        print_success "MIG rolling update started"
+        print_success "MIG rolling update started (zero-downtime)"
     else
         gcloud compute instance-groups managed create $INSTANCE_GROUP \
             --template=$INSTANCE_TEMPLATE --size=$GCE_INIT_SIZE --zone=$ZONE \
@@ -107,6 +124,27 @@ gce_create_mig() {
     
     gcloud compute instance-groups managed set-named-ports $INSTANCE_GROUP \
         --named-ports=http:8080 --zone=$ZONE --quiet
+}
+
+gce_setup_autoscaling() {
+    print_step "8.1" "Configuring Auto-scaling"
+    
+    # 检查是否已配置自动扩容
+    if gcloud compute instance-groups managed describe $INSTANCE_GROUP \
+        --zone=$ZONE --format='value(autoscaler)' 2>/dev/null | grep -q "autoscalers"; then
+        print_success "Autoscaler (already configured)"
+        return 0
+    fi
+    
+    gcloud compute instance-groups managed set-autoscaling $INSTANCE_GROUP \
+        --zone=$ZONE \
+        --min-num-replicas=$GCE_MIN_INSTANCES \
+        --max-num-replicas=$GCE_MAX_INSTANCES \
+        --target-cpu-utilization=$GCE_TARGET_CPU \
+        --cool-down-period=60 \
+        --quiet
+    
+    print_success "Autoscaler: $GCE_MIN_INSTANCES-$GCE_MAX_INSTANCES instances (CPU target: ${GCE_TARGET_CPU})"
 }
 
 gce_create_lb() {
@@ -164,37 +202,39 @@ gce_deploy() {
     print_info "Machine: $GCE_MACHINE_TYPE (~\$5/month)"
     
     enable_apis "gce"
-    setup_pubsub
     build_image
     gce_setup_firewall
     gce_create_template
     gce_create_health_check
     gce_create_mig
+    gce_setup_autoscaling
     gce_create_lb
     gce_summary
 }
 
 gce_summary() {
     SERVICE_URL=$(gce_get_service_url)
+    local cpu_percent=$(awk "BEGIN {printf \"%.0f\", $GCE_TARGET_CPU * 100}")
     
     print_header "GCE MIG Deployment Complete"
-    cat << EOF
-
-  Service URL:  ${GREEN}$SERVICE_URL${NC}
-  Dashboard:    ${GREEN}$SERVICE_URL/dashboard${NC}
-
-  ${CYAN}Commands:${NC}
-    Start:  ${YELLOW}./deploy.sh gce start${NC}
-    Stop:   ${YELLOW}./deploy.sh gce stop${NC}
-    Scale:  ${YELLOW}./deploy.sh gce scale 3${NC}
-    Status: ${YELLOW}./deploy.sh gce status${NC}
-
-  ${CYAN}Test:${NC}
-  ${YELLOW}gcloud pubsub topics publish $TOPIC_NAME \\
-    --message='{"msg":"Hello!"}' \\
-    --attribute=channel_id=test,event_type=notification${NC}
-
-EOF
+    echo ""
+    echo -e "  ${CYAN}统一入口:${NC}"
+    echo -e "  Service URL:  ${GREEN}$SERVICE_URL${NC}"
+    echo -e "  Dashboard:    ${GREEN}$SERVICE_URL/dashboard${NC}"
+    echo ""
+    echo -e "  ${CYAN}自动扩容配置:${NC}"
+    echo -e "    最小实例: $GCE_MIN_INSTANCES"
+    echo -e "    最大实例: $GCE_MAX_INSTANCES"
+    echo -e "    CPU 阈值: ${cpu_percent}%"
+    echo ""
+    echo -e "  ${CYAN}管理命令:${NC}"
+    echo -e "    Status: ${YELLOW}./deploy.sh gce status${NC}"
+    echo -e "    Update: ${YELLOW}./deploy.sh gce update${NC}"
+    echo -e "    Stop:   ${YELLOW}./deploy.sh gce stop${NC}"
+    echo ""
+    echo -e "  ${CYAN}测试:${NC}"
+    echo -e "  ${YELLOW}curl $SERVICE_URL/health${NC}"
+    echo ""
 }
 
 gce_status() {
@@ -237,12 +277,29 @@ gce_stop() {
 
 gce_update() {
     print_header "Rolling Update"
+    
+    # 显示当前状态
+    local current_size=$(gcloud compute instance-groups managed describe $INSTANCE_GROUP \
+        --zone=$ZONE --format='value(targetSize)' 2>/dev/null || echo "0")
+    
+    if [ "$current_size" = "0" ]; then
+        print_warning "No instances running. Consider using './deploy.sh gce scale 1' first."
+    else
+        echo -e "  ${YELLOW}This will update $current_size running instance(s)${NC}"
+    fi
+    
+    read -p "  Continue with rolling update? (y/N): " confirm
+    if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+        print_info "Cancelled"
+        return 0
+    fi
+    
     build_image
     gce_create_template
     gcloud compute instance-groups managed rolling-action start-update $INSTANCE_GROUP \
         --version=template=$INSTANCE_TEMPLATE --zone=$ZONE \
         --max-surge=1 --max-unavailable=0 --quiet
-    print_success "Update started"
+    print_success "Rolling update started (zero-downtime)"
 }
 
 gce_ssh() {

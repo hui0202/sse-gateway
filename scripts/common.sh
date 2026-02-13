@@ -18,10 +18,6 @@ ZONE=${ZONE:-"asia-east1-a"}
 SERVICE_NAME="gateway-sse"
 IMAGE_NAME="gcr.io/$PROJECT_ID/$SERVICE_NAME:latest"
 
-# Pub/Sub
-TOPIC_NAME="gateway-subscription"
-SUBSCRIPTION_NAME="gateway-subscription-sub"
-
 # Print functions
 print_header() {
     echo -e "\n${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -57,7 +53,6 @@ enable_apis() {
     
     local apis=(
         "cloudbuild.googleapis.com"
-        "pubsub.googleapis.com"
         "containerregistry.googleapis.com"
         "secretmanager.googleapis.com"
     )
@@ -82,28 +77,6 @@ enable_apis() {
         --role="roles/secretmanager.secretAccessor" \
         --quiet 2>/dev/null || true
     print_success "Secret Manager permissions configured"
-}
-
-# Setup Pub/Sub
-setup_pubsub() {
-    print_step "3" "Configuring Pub/Sub"
-    
-    if gcloud pubsub topics describe $TOPIC_NAME &>/dev/null; then
-        print_success "Topic: $TOPIC_NAME (already exists)"
-    else
-        gcloud pubsub topics create $TOPIC_NAME
-        print_success "Topic: $TOPIC_NAME (created)"
-    fi
-    
-    if gcloud pubsub subscriptions describe $SUBSCRIPTION_NAME &>/dev/null; then
-        print_success "Subscription: $SUBSCRIPTION_NAME (already exists)"
-    else
-        gcloud pubsub subscriptions create $SUBSCRIPTION_NAME \
-            --topic=$TOPIC_NAME \
-            --ack-deadline=10 \
-            --message-retention-duration=1h
-        print_success "Subscription: $SUBSCRIPTION_NAME (created)"
-    fi
 }
 
 # Image functions
@@ -131,44 +104,121 @@ build_image() {
 }
 
 # Secret functions
+# Secrets 使用服务名前缀，避免多服务冲突
+SECRET_PREFIX="${SERVICE_NAME}"
+
+get_full_secret_name() {
+    echo "${SECRET_PREFIX}-$1"
+}
+
 secret_exists() {
-    gcloud secrets describe "$1" --project=$PROJECT_ID &>/dev/null 2>&1
+    local full_name=$(get_full_secret_name "$1")
+    gcloud secrets describe "$full_name" --project=$PROJECT_ID &>/dev/null 2>&1
 }
 
 get_secret_value() {
-    gcloud secrets versions access latest --secret="$1" --project=$PROJECT_ID 2>/dev/null
+    local full_name=$(get_full_secret_name "$1")
+    gcloud secrets versions access latest --secret="$full_name" --project=$PROJECT_ID 2>/dev/null
 }
 
 add_secret() {
     local name=$1 value=$2
+    local full_name=$(get_full_secret_name "$name")
     
-    if [ -z "$name" ] || [ -z "$value" ]; then
+    if [ -z "$name" ]; then
         cat << EOF
 
-Usage: ./deploy.sh secret NAME VALUE
+Usage: ./deploy.sh secret NAME [VALUE]
+
+If VALUE is omitted, you'll be prompted to enter it securely (hidden input).
 
 Available secrets:
   REDIS_URL           - Redis connection URL
   GCP_PROJECT         - GCP Project ID
-  PUBSUB_SUBSCRIPTION - Pub/Sub subscription name
 
 Example:
-  ./deploy.sh secret REDIS_URL redis://user:pass@host:6379
+  ./deploy.sh secret REDIS_URL                    # Interactive (secure)
+  ./deploy.sh secret REDIS_URL redis://host:6379  # Direct (visible in history)
+
+Secrets are prefixed with service name: ${SECRET_PREFIX}-NAME
 
 EOF
         exit 1
     fi
     
-    if gcloud secrets describe $name --project=$PROJECT_ID &>/dev/null; then
-        echo -n "$value" | gcloud secrets versions add $name --data-file=- --project=$PROJECT_ID
-        print_success "Secret '$name' updated"
+    # 如果没提供 value，交互式读取（不显示输入）
+    if [ -z "$value" ]; then
+        read -s -p "Enter value for $name: " value
+        echo ""
+        if [ -z "$value" ]; then
+            print_error "Value cannot be empty"
+        fi
+    fi
+    
+    if gcloud secrets describe "$full_name" --project=$PROJECT_ID &>/dev/null; then
+        print_warning "Secret '$full_name' already exists"
+        read -p "  Overwrite with new version? (y/N): " confirm
+        if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+            echo "  Cancelled"
+            return 0
+        fi
+        printf '%s' "$value" | gcloud secrets versions add "$full_name" --data-file=- --project=$PROJECT_ID
+        print_success "Secret '$full_name' updated (new version added)"
     else
-        echo -n "$value" | gcloud secrets create $name --data-file=- --project=$PROJECT_ID
-        print_success "Secret '$name' created"
+        printf '%s' "$value" | gcloud secrets create "$full_name" \
+            --data-file=- \
+            --labels="service=${SERVICE_NAME}" \
+            --project=$PROJECT_ID
+        print_success "Secret '$full_name' created"
     fi
 }
 
 list_secrets() {
-    print_header "Secrets List"
-    gcloud secrets list --project=$PROJECT_ID --format="table(name,createTime)"
+    print_header "Secrets for ${SERVICE_NAME}"
+    echo ""
+    print_info "Showing secrets with prefix: ${SECRET_PREFIX}-*"
+    echo ""
+    gcloud secrets list \
+        --project=$PROJECT_ID \
+        --filter="name ~ ^projects/.*/secrets/${SECRET_PREFIX}-" \
+        --format="table(name.basename(),createTime.date(),labels)"
+    
+    echo ""
+    print_info "To view a secret value: gcloud secrets versions access latest --secret=SECRET_NAME"
+}
+
+get_all_secret_names() {
+    gcloud secrets list \
+        --project=$PROJECT_ID \
+        --filter="name ~ ^projects/.*/secrets/${SECRET_PREFIX}-" \
+        --format="value(name)" | \
+    while read full_path; do
+        basename="${full_path##*/}"
+        echo "${basename#${SECRET_PREFIX}-}"
+    done
+}
+
+# 格式: ENV_VAR=full-secret-name:latest,ENV_VAR2=full-secret-name2:latest
+generate_cloudrun_secrets() {
+    local secrets=""
+    for name in $(get_all_secret_names); do
+        local full_name=$(get_full_secret_name "$name")
+        [ -n "$secrets" ] && secrets="$secrets,"
+        secrets="${secrets}${name}=${full_name}:latest"
+        echo -e "  ${CYAN}→${NC} $name: from Secret Manager" >&2
+    done
+    echo "$secrets"
+}
+
+# 格式: KEY1=value1,KEY2=value2
+generate_gce_secrets_env() {
+    local env_vars=""
+    for name in $(get_all_secret_names); do
+        local value=$(get_secret_value "$name")
+        [ -n "$env_vars" ] && env_vars="$env_vars,"
+        env_vars="${env_vars}${name}=${value}"
+        # 输出到 stderr，避免被 $() 捕获
+        echo -e "  ${CYAN}→${NC} $name: from Secret Manager" >&2
+    done
+    echo "$env_vars"
 }

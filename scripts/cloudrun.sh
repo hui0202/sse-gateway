@@ -15,40 +15,19 @@ cloudrun_deploy() {
     print_info "Max instances: $CR_MAX_INSTANCES (supports $((CR_MAX_INSTANCES * CR_CONCURRENCY)) concurrent)"
     
     enable_apis "cloudrun"
-    setup_pubsub
     build_image
     
-    print_step "5" "Deploying to Cloud Run"
+    print_step "4" "Deploying to Cloud Run"
     
-    ENV_VARS="RUST_LOG=info"
-    SECRETS=""
+    # 基础环境变量
+    ENV_VARS="RUST_LOG=info,GCP_PROJECT=$PROJECT_ID"
+    print_info "GCP_PROJECT: $PROJECT_ID"
     
-    if secret_exists "GCP_PROJECT"; then
-        SECRETS="GCP_PROJECT=GCP_PROJECT:latest"
-        print_info "GCP_PROJECT: from Secret Manager"
-    else
-        ENV_VARS="$ENV_VARS,GCP_PROJECT=$PROJECT_ID"
-        print_info "GCP_PROJECT: $PROJECT_ID"
-    fi
+    # 自动注入所有 secrets（从 Secret Manager 获取当前服务的所有 secrets）
+    SECRETS=$(generate_cloudrun_secrets)
     
-    if secret_exists "PUBSUB_SUBSCRIPTION"; then
-        [ -n "$SECRETS" ] && SECRETS="$SECRETS,"
-        SECRETS="${SECRETS}PUBSUB_SUBSCRIPTION=PUBSUB_SUBSCRIPTION:latest"
-        print_info "PUBSUB_SUBSCRIPTION: from Secret Manager"
-    else
-        ENV_VARS="$ENV_VARS,PUBSUB_SUBSCRIPTION=$SUBSCRIPTION_NAME"
-        print_info "PUBSUB_SUBSCRIPTION: $SUBSCRIPTION_NAME"
-    fi
-    
-    if secret_exists "REDIS_URL"; then
-        [ -n "$SECRETS" ] && SECRETS="$SECRETS,"
-        SECRETS="${SECRETS}REDIS_URL=REDIS_URL:latest"
-        print_info "REDIS_URL: from Secret Manager"
-    elif [ -n "$REDIS_URL" ]; then
-        ENV_VARS="$ENV_VARS,REDIS_URL=$REDIS_URL"
-        print_info "REDIS_URL: from environment"
-    else
-        print_warning "REDIS_URL: not configured"
+    if [ -z "$SECRETS" ]; then
+        print_warning "No secrets found for ${SERVICE_NAME}"
     fi
     
     DEPLOY_CMD="gcloud run deploy $SERVICE_NAME \
@@ -85,22 +64,18 @@ cloudrun_summary() {
     SERVICE_URL=$(gcloud run services describe $SERVICE_NAME --region $REGION --format 'value(status.url)')
     
     print_header "Cloud Run Deployment Complete"
-    cat << EOF
-
-  Service URL:  ${GREEN}$SERVICE_URL${NC}
-  Dashboard:    ${GREEN}$SERVICE_URL/dashboard${NC}
-
-  ${CYAN}Configuration:${NC}
-    Instances: $CR_MIN_INSTANCES - $CR_MAX_INSTANCES
-    Concurrency: $CR_CONCURRENCY/instance
-    Resources: $CR_CPU vCPU / $CR_MEMORY
-
-  ${CYAN}Test:${NC}
-  ${YELLOW}gcloud pubsub topics publish $TOPIC_NAME \\
-    --message='{"msg":"Hello!"}' \\
-    --attribute=channel_id=test,event_type=notification${NC}
-
-EOF
+    echo ""
+    echo -e "  Service URL:  ${GREEN}$SERVICE_URL${NC}"
+    echo -e "  Dashboard:    ${GREEN}$SERVICE_URL/dashboard${NC}"
+    echo ""
+    echo -e "  ${CYAN}Configuration:${NC}"
+    echo -e "    Instances: $CR_MIN_INSTANCES - $CR_MAX_INSTANCES"
+    echo -e "    Concurrency: $CR_CONCURRENCY/instance"
+    echo -e "    Resources: $CR_CPU vCPU / $CR_MEMORY"
+    echo ""
+    echo -e "  ${CYAN}Test:${NC}"
+    echo -e "  ${YELLOW}curl $SERVICE_URL/health${NC}"
+    echo ""
 }
 
 cloudrun_delete() {
