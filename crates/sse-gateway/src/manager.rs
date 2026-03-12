@@ -136,6 +136,15 @@ impl ConnectionManager {
         self.connections.iter().map(|e| e.value().clone()).collect()
     }
 
+    /// Get all active channel IDs
+    pub fn active_channel_ids(&self) -> Vec<String> {
+        self.channel_index
+            .iter()
+            .filter(|entry| !entry.value().is_empty())
+            .map(|entry| entry.key().clone())
+            .collect()
+    }
+
     /// Clean up dead connections
     pub fn cleanup_dead_connections(&self) {
         let dead_ids: Vec<String> = self

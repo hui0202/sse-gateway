@@ -321,6 +321,19 @@ impl ChannelRegistry {
             .ok()
     }
 
+    /// Refresh TTL for a channel (keep it alive while connection is active)
+    async fn refresh_channel(&self, channel_id: &str) {
+        let Some(ref mut conn) = *self.redis.write().await else { return };
+
+        let key = Self::channel_key(channel_id);
+
+        let _: Result<bool, _> = redis::cmd("EXPIRE")
+            .arg(&key)
+            .arg(self.channel_ttl)
+            .query_async(conn)
+            .await;
+    }
+
     /// Get all channel mappings (for debugging)
     async fn get_all_channels(&self) -> anyhow::Result<std::collections::HashMap<String, String>> {
         let Some(ref mut conn) = *self.redis.write().await else {
@@ -429,6 +442,28 @@ impl MessageSource for DirectPushSource {
                 .with_graceful_shutdown(async move { cancel_clone.cancelled().await })
                 .await
                 .ok();
+        });
+
+        // Periodically refresh channel TTLs for active connections
+        let channel_registry_ref = self.channel_registry.clone();
+        let conn_mgr_ref = state.connection_manager.clone();
+        let cancel_ttl = cancel.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                tokio::select! {
+                    _ = cancel_ttl.cancelled() => break,
+                    _ = interval.tick() => {
+                        let channels = conn_mgr_ref.active_channel_ids();
+                        for ch in &channels {
+                            channel_registry_ref.refresh_channel(ch).await;
+                        }
+                        if !channels.is_empty() {
+                            tracing::debug!(count = channels.len(), "Refreshed channel TTLs");
+                        }
+                    }
+                }
+            }
         });
 
         // Forward messages
@@ -645,7 +680,7 @@ async fn main() -> anyhow::Result<()> {
     let channel_ttl: u64 = std::env::var("CHANNEL_TTL")
         .ok()
         .and_then(|t| t.parse().ok())
-        .unwrap_or(60);
+        .unwrap_or(300);
 
     // Initialize registries
     let service_registry = ServiceRegistry::new(instance_id.clone(), instance_addr.clone());
