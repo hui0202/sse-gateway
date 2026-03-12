@@ -415,6 +415,9 @@ impl MessageSource for DirectPushSource {
         // Start heartbeat
         self.service_registry.register_and_start_heartbeat(cancel.clone()).await;
 
+        // Clone connection_manager before moving into AppState
+        let conn_mgr_ref = connection_manager.clone();
+
         // Start HTTP server
         let state = AppState {
             sender: self.sender.clone(),
@@ -446,7 +449,6 @@ impl MessageSource for DirectPushSource {
 
         // Periodically refresh channel TTLs for active connections
         let channel_registry_ref = self.channel_registry.clone();
-        let conn_mgr_ref = state.connection_manager.clone();
         let cancel_ttl = cancel.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60));
