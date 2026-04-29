@@ -133,9 +133,15 @@ impl ServiceRegistry {
 
         let mut pipe = redis::pipe();
         
-        // Update last_seen
+        // Update address as well as last_seen. If Redis evicts/expires
+        // `gateway:instance:{id}` and the next heartbeat recreates the
+        // hash, writing only `last_seen` leaves a live instance with no
+        // push address. The agent can then resolve the channel's instance
+        // id but cannot POST /push to it.
         pipe.cmd("HSET")
             .arg(&instance_key)
+            .arg("address")
+            .arg(&self.instance_addr)
             .arg("last_seen")
             .arg(now)
             .ignore();
@@ -611,10 +617,11 @@ async fn handle_channel_status(
         Some(id) => state.service_registry.get_instance_address(id).await,
         None => None,
     };
+    let online = instance_address.is_some();
 
     Json(ChannelStatus {
         channel_id,
-        online: instance_id.is_some(),
+        online,
         instance_id,
         instance_address,
     })
